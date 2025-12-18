@@ -99,6 +99,7 @@ WORKDIR /tmp/libcamera-rpi-build
 RUN . $ROS_ROOT/setup.sh \
     && git clone --depth 1 --branch "v0.6.0+rpt20251202" https://github.com/raspberrypi/libcamera \
     && cd libcamera \
+    && apt update \
     && apt install -y \
     libboost-dev \
     libgnutls28-dev \
@@ -113,6 +114,8 @@ RUN . $ROS_ROOT/setup.sh \
     && ninja -C build install \
     && mv /usr/local/lib/python3/dist-packages/libcamera /usr/local/lib/python3.12/dist-packages \
     && mv /usr/local/include/libcamera/libcamera /usr/include \
+    && mv /usr/local/lib/aarch64-linux-gnu/pkgconfig/* /usr/lib/pkgconfig \
+    && rmdir /usr/local/lib/aarch64-linux-gnu/pkgconfig \
     && mv /usr/local/lib/aarch64-linux-gnu/* /usr/lib \
     && rm -rf /usr/local/include \
     && rm -rf /tmp/* \
