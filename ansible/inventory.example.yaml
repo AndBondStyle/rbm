@@ -1,0 +1,12 @@
+# Example inventory configuration, copy to ansible/inventory.yaml
+all:
+  hosts:
+    rbm-11:
+      ansible_host: 192.168.1.123  # Direct IP
+      ansible_user: robomarvel
+    rbm-22:
+      ansible_host: rbm-22.local  # mDNS
+      ansible_user: robomarvel
+    rbm-33:
+      ansible_host: yandex-rbm-33.lab.vpn  # VPN
+      ansible_user: robomarvel

@@ -1,0 +1,57 @@
+- hosts: all
+  become: true
+
+  vars:
+    # ssh_public_keys:
+    #   xxx: ~/.ssh/common_id.pub
+    tailscale:
+      server: "{{ lookup('env', 'TAILSCALE_SERVER') }}"
+      authkey: "{{ lookup('env', 'TAILSCALE_KEY') }}"
+
+  tasks:
+    # - name: Add ssh key to authorized keys
+    #   ansible.posix.authorized_key:
+    #     state: present
+    #     user: "{{ ansible_user }}"
+    #     comment: "{{ item.key }}"
+    #     key: "{{ lookup('file', item.value) }}"
+    #   loop: "{{ ssh_public_keys | dict2items }}"
+    #   loop_control:
+    #     label: "{{ item.key }}"
+
+    - name: Create /etc/apt/keyrings dir
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+    
+    - name: Download Tailscale GPG keyring
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/hopleus/tailscale-mirror/main/data/stable/debian/trixie.noarmor.gpg
+        dest: /usr/share/keyrings/tailscale-mirror-archive-keyring.gpg
+        mode: "0644"
+    
+    - name: Add Tailscale repository to sources list
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/tailscale-mirror-archive-keyring.gpg] https://raw.githubusercontent.com/hopleus/tailscale-mirror/main/data/stable/debian trixie main"
+        state: present
+        filename: tailscale-mirror
+        update_cache: yes
+
+    - name: Install Tailscale package
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+
+    - name: Tailscale up
+      ansible.builtin.command:
+        cmd: >
+          tailscale up 
+          --hostname "yandex-{{ inventory_hostname }}" 
+          --login-server {{ tailscale.server }}
+          --authkey "{{ tailscale.authkey }}"
+      no_log: true
+
+    - name: Install docker
+      ansible.builtin.include_role:
+        name: geerlingguy.docker

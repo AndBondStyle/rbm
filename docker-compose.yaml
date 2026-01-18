@@ -1,10 +1,10 @@
 services:
   ros:
-    image: registry.robotics-lab.ru/robomarvel:v1
+    image: registry.robotics-lab.ru/robomarvel:v2
     build: .
     container_name: ros
     privileged: true
-    ports: [8765:8765]
+    ports: [8765:8765, 8080:8080]
     volumes:
       - ".:/src"
       - "/dev:/dev"
