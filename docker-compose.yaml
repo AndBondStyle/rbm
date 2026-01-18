@@ -1,6 +1,6 @@
 services:
   ros:
-    image: registry.robotics-lab.ru/robomarvel:v2
+    image: registry.robotics-lab.ru/robomarvel:v3
     build: .
     container_name: ros
     privileged: true

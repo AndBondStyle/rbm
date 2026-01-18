@@ -9,7 +9,7 @@ all:
 
 .PHONY: build
 build:
-	source /opt/ros/$ROS_DISTRO/setup.sh
+	source /opt/ros/${ROS_DISTRO}/setup.sh
 	colcon --log-base /dev/null build \
 		--base-paths packages \
 		--executor parallel \
@@ -19,7 +19,7 @@ build:
 
 .PHONY: build-all
 build-all:
-	source /opt/ros/$ROS_DISTRO/setup.sh
+	source /opt/ros/${ROS_DISTRO}/setup.sh
 	colcon --log-base /dev/null build \
 		--base-paths packages \
 		--executor parallel \

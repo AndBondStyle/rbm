@@ -116,10 +116,10 @@ RUN . $ROS_ROOT/setup.sh \
     && mv /usr/local/include/libcamera/libcamera /usr/include \
     && mv /usr/local/lib/aarch64-linux-gnu/pkgconfig/* /usr/lib/pkgconfig \
     && rmdir /usr/local/lib/aarch64-linux-gnu/pkgconfig \
-    && mv /usr/local/lib/aarch64-linux-gnu/* /usr/lib \
     && rm -rf /usr/local/include \
     && rm -rf /tmp/* \
     && rm -rf /var/lib/apt/lists/*
+    # && mv /usr/local/lib/aarch64-linux-gnu/* /usr/lib \
 
 # Build camera-ros
 WORKDIR /tmp/camera-ros-build
@@ -136,6 +136,7 @@ RUN . $ROS_ROOT/setup.sh \
 RUN apt update && \
     apt install -y \
     tmux \
+    tmuxp \
     nano \
     wget \
     python3-pip \
@@ -144,12 +145,12 @@ RUN apt update && \
     ros-$ROS_DISTRO-xacro \
     ros-$ROS_DISTRO-robot-state-publisher \
     ros-$ROS_DISTRO-robot-localization \
+    ros-$ROS_DISTRO-rtabmap-odom \
     && rm -rf /var/lib/apt/lists/*
-    # ros-$ROS_DISTRO-rtabmap-odom \
 
 # Setup .bashrc
 RUN echo '\
-export LD_LIBRARY_PATH=$ROS_ROOT/lib/$(gcc -dumpmachine)\n\
+export LD_LIBRARY_PATH=$ROS_ROOT/lib/$(gcc -dumpmachine):/usr/local/lib/$(gcc -dumpmachine)\n\
 source $ROS_ROOT/setup.bash\n\
 LOCAL_SETUP="/src/install/setup.bash";\n\
 if [ -f "$LOCAL_SETUP" ]; then source $LOCAL_SETUP; fi\n\
