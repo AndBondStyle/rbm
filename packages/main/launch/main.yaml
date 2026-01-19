@@ -1,0 +1,20 @@
+launch:
+  - node:
+      pkg: "hwnode"
+      exec: "hwnode"
+      name: "hwnode"
+      output: "screen"
+  - include:
+      file: $(find-pkg-share main)/launch/bridge.yaml
+  - include:
+      file: $(find-pkg-share main)/launch/urdf.yaml
+  - include:
+      file: $(find-pkg-share main)/launch/lidar.yaml
+  - include:
+      file: $(find-pkg-share main)/launch/icp.yaml
+  - include:
+      file: $(find-pkg-share main)/launch/nav2.yaml
+  - include:
+      file: $(find-pkg-share main)/launch/slam.yaml
+  - include:
+      file: $(find-pkg-share main)/launch/camera.yaml
