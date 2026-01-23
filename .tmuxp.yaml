@@ -1,0 +1,4 @@
+session_name: main
+windows:
+  - panes:
+      - ros2 launch main main.yaml

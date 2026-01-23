@@ -4,6 +4,8 @@ services:
     build: .
     container_name: ros
     privileged: true
+    restart: always
+    entrypoint: ["/src/entrypoint.sh"]
     ports: [8765:8765, 8080:8080]
     volumes:
       - ".:/src"
