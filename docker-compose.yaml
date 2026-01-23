@@ -6,7 +6,11 @@ services:
     privileged: true
     restart: always
     entrypoint: ["/src/entrypoint.sh"]
-    ports: [8765:8765, 8080:8080]
+    ports:
+      - 8765:8765      # Foxglove Websocket
+      - 8080:8080      # Generic HTTP
+      - 8889:8889      # MediaMTX HTTP
+      - 8189:8189/udp  # MediaMTX WebRTC
     volumes:
       - ".:/src"
       - "/dev:/dev"
