@@ -12,7 +12,7 @@ class YoloDetectorNode(Node):
         super().__init__('yolo_detector')
         
         # Параметры
-        self.declare_parameter('model', '/root/weights/yolo11n_ncnn_model')
+        self.declare_parameter('model', 'yolo11n.pt')
         self.declare_parameter('confidence', 0.5)
         self.declare_parameter('device', 'cpu')  # или 'cuda:0' для GPU
         
