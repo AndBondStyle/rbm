@@ -154,7 +154,7 @@ ADD docker/picamera2.patch .
 RUN apt update \
     && apt install -y linux-libc-dev libcap-dev portaudio19-dev python3-pyaudio \
     && python3 -m venv /root/venv --system-site-packages \
-    && source ~/venv/bin/activate \
+    && . ~/venv/bin/activate \
     && pip install picamera2 ultralytics-opencv-headless ncnn grpcio-tools \
     && patch -p1 -i picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2 \
     && mkdir /root/weights \

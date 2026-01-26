@@ -2,6 +2,7 @@ services:
   ros:
     image: registry.robotics-lab.ru/robomarvel:v5
     build: .
+    platform: linux/arm64
     container_name: ros
     privileged: true
     restart: always
