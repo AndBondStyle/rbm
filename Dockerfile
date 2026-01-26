@@ -148,12 +148,43 @@ RUN apt update && \
     ros-$ROS_DISTRO-rtabmap-odom \
     && rm -rf /var/lib/apt/lists/*
 
+# Setup venv, picamera2, yolo, yandex speechkit
+WORKDIR /tmp/venv-setup
+ADD docker/picamera2.patch .
+RUN apt update \
+    && apt install -y linux-libc-dev libcap-dev portaudio19-dev python3-pyaudio \
+    && python3 -m venv /root/venv --system-site-packages \
+    && source ~/venv/bin/activate \
+    && pip install picamera2 ultralytics-opencv-headless ncnn grpcio-tools \
+    && patch -p1 -i picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2 \
+    && mkdir /root/weights \
+    && python3 -c 'from ultralytics import YOLO; YOLO("~/weights/yolo11n.pt").export(format="ncnn"); YOLO("~/weights/yolo11n_ncnn_model", task="detect")' \
+    && git clone https://github.com/yandex-cloud/cloudapi \
+    && cd cloudapi \
+    && mkdir output \
+    && python3 -m grpc_tools.protoc -I . -I third_party/googleapis \
+        --python_out=output \
+        --grpc_python_out=output \
+        google/api/http.proto \
+        google/api/annotations.proto \
+        yandex/cloud/api/operation.proto \
+        google/rpc/status.proto \
+        yandex/cloud/operation/operation.proto \yandex/cloud/validation.proto \
+        yandex/cloud/ai/stt/v3/stt_service.proto \
+        yandex/cloud/ai/stt/v3/stt.proto \
+        yandex/cloud/ai/tts/v3/tts_service.proto \
+        yandex/cloud/ai/tts/v3/tts.proto \
+    && cp -r output/* /root/venv/lib/python3.12/site-packages/ \
+    && rm -rf /tmp/* \
+    && rm -rf /var/lib/apt/lists/*
+
 # Setup .bashrc
 RUN echo '\
 export LD_LIBRARY_PATH=$ROS_ROOT/lib/$(gcc -dumpmachine):/usr/local/lib/$(gcc -dumpmachine)\n\
 source $ROS_ROOT/setup.bash\n\
 LOCAL_SETUP="/src/install/setup.bash";\n\
 if [ -f "$LOCAL_SETUP" ]; then source $LOCAL_SETUP; fi\n\
+source /root/venv/bin/activate\n\
 ' >> /root/.bashrc
 
 # Entrypoint

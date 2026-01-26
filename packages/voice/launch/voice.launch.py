@@ -1,6 +1,7 @@
 from launch import LaunchDescription                                                                                                                                                      
 from launch_ros.actions import Node                                                                                                                                                       
 from launch.actions import DeclareLaunchArgument
+from launch.actions import SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 import os
 
@@ -18,9 +19,15 @@ def generate_launch_description():
         description='Folder ID for Yandex Cloud (required for user account)'
     )
 
+    set_pythonpath = SetEnvironmentVariable(
+        'PYTHONPATH',
+        value='/root/venv/lib/python3.12/site-packages' + os.pathsep + os.environ.get('PYTHONPATH', '')
+    )
+
     return LaunchDescription([
         iam_token_arg,
         folder_id_arg,
+        set_pythonpath,
 
         # STT Node
         Node(

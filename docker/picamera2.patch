@@ -1,0 +1,53 @@
+diff -crB picamera2/picamera2.py picamera2-fix/picamera2.py
+*** picamera2/picamera2.py      2026-01-26 11:57:45.193966859 +0000
+--- picamera2-fix/picamera2.py  2026-01-26 12:44:17.831036078 +0000
+***************
+*** 29,35 ****
+  from picamera2.allocators import DmaAllocator
+  from picamera2.encoders import Encoder, H264Encoder, MJPEGEncoder, Quality
+  from picamera2.outputs import FfmpegOutput, FileOutput
+! from picamera2.previews import DrmPreview, NullPreview, QtGlPreview, QtPreview
+  
+  from .configuration import CameraConfiguration
+  from .controls import Controls
+--- 29,35 ----
+  from picamera2.allocators import DmaAllocator
+  from picamera2.encoders import Encoder, H264Encoder, MJPEGEncoder, Quality
+  from picamera2.outputs import FfmpegOutput, FileOutput
+! from picamera2.previews import NullPreview  # DrmPreview, QtGlPreview, QtPreview
+  
+  from .configuration import CameraConfiguration
+  from .controls import Controls
+***************
+*** 50,58 ****
+      """Enum that applications can pass to the start_preview method."""
+  
+      NULL = NullPreview
+!     DRM = DrmPreview
+!     QT = QtPreview
+!     QTGL = QtGlPreview
+  
+  
+  class GlobalCameraInfo(TypedDict):
+--- 50,58 ----
+      """Enum that applications can pass to the start_preview method."""
+  
+      NULL = NullPreview
+!     # DRM = DrmPreview
+!     # QT = QtPreview
+!     # QTGL = QtGlPreview
+  
+  
+  class GlobalCameraInfo(TypedDict):
+diff -crB picamera2/previews/__init__.py picamera2-fix/previews/__init__.py
+*** picamera2/previews/__init__.py      2026-01-26 11:57:45.201966837 +0000
+--- picamera2-fix/previews/__init__.py  2026-01-26 12:44:29.671011863 +0000
+***************
+*** 1,3 ****
+! from .drm_preview import DrmPreview
+  from .null_preview import NullPreview
+! from .qt_previews import QtGlPreview, QtPreview
+--- 1,3 ----   
+! # from .drm_preview import DrmPreview
+  from .null_preview import NullPreview
+! # from .qt_previews import QtGlPreview, QtPreview
