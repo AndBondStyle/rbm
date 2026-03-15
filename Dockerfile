@@ -151,14 +151,15 @@ RUN apt update && \
 # Setup venv, picamera2, yolo, yandex speechkit
 WORKDIR /tmp/venv-setup
 ADD docker/picamera2.patch /tmp/venv-setup/picamera2.patch
+RUN patch -p1 -i /tmp/venv-setup/picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2
 RUN apt update \
     && apt install -y linux-libc-dev libcap-dev portaudio19-dev python3-pyaudio \
     && python3 -m venv /root/venv --system-site-packages \
-    && . ~/venv/bin/activate \
+    && . /root/venv/bin/activate \
     && pip install picamera2 ultralytics-opencv-headless ncnn grpcio-tools \
     && patch -p1 -i /tmp/venv-setup/picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2 \
     && mkdir /root/weights \
-    && python3 -c 'from ultralytics import YOLO; YOLO("~/weights/yolo11n.pt").export(format="ncnn"); YOLO("~/weights/yolo11n_ncnn_model", task="detect")' \
+    && python3 -c 'from ultralytics import YOLO; YOLO("/root/weights/yolo11n.pt").export(format="ncnn"); YOLO("/root/weights/yolo11n_ncnn_model", task="detect")' \
     && git clone https://github.com/yandex-cloud/cloudapi \
     && cd cloudapi \
     && mkdir output \
@@ -169,7 +170,8 @@ RUN apt update \
         google/api/annotations.proto \
         yandex/cloud/api/operation.proto \
         google/rpc/status.proto \
-        yandex/cloud/operation/operation.proto \yandex/cloud/validation.proto \
+        yandex/cloud/operation/operation.proto \
+        yandex/cloud/validation.proto \
         yandex/cloud/ai/stt/v3/stt_service.proto \
         yandex/cloud/ai/stt/v3/stt.proto \
         yandex/cloud/ai/tts/v3/tts_service.proto \
