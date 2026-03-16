@@ -129,6 +129,7 @@ class CameraTest(BaseTest):
     name = "CAMERA"
 
     async def test(self):
+        await self.shell("docker stop ros", check=False, timeout=10)
         logs = await self.shell("rpicam-hello --list-cameras")
         lines = logs.splitlines()
         count = sum(1 for line in lines if line.strip() and line[0].isdigit())
@@ -474,16 +475,12 @@ class DockerROSTest(BaseTest):
         self.log(f"Topic rate OK: {avg_rate:.3f} >> {min_rate} Hz", color="green")
 
     async def test(self):
-        try:
-            await self._start_container()
-            await self._check_nodes()
-            await self._check_transforms()
-            for topic, min_rate, timeout in self.TOPICS:
-                await self._check_topic(topic, min_rate, timeout)
-            return True
-        finally:
-            self.log("\r\nStopping container...")
-            await self.shell("docker stop ros", check=False, timeout=10)
+        await self._start_container()
+        await self._check_nodes()
+        await self._check_transforms()
+        for topic, min_rate, timeout in self.TOPICS:
+            await self._check_topic(topic, min_rate, timeout)
+        return True
 
 
 # ----------------------------------------------------------------

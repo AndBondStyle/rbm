@@ -1,12 +1,12 @@
 #!/bin/bash
 
 REPO_DIR="$HOME/robomarvel"
-REPO_URL="https://git@git.sourcecraft.dev/robomarvel/rbm-runtime.git"
+REPO_URL="https://github.com/AndBondStyle/rbm"
 SETUP_DIR="$HOME/.setup"
 VENV_DIR="$SETUP_DIR/venv"
 TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
 TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
-REQUIREMENTS=("pyserial" "nicegui")
+REQUIREMENTS="pyserial nicegui"
 SERVICE_NAME="rbm-web-tests"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
@@ -27,20 +27,14 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
-install_apt_packages() {
-    log_info "Установка APT пакетов..."
-    sudo apt-get update
-    sudo apt-get install -y git curl udev
-}
-
 install_docker() {
-    log_info "Проверка установки Docker..."
+    log_info "Проверка установки Docker"
     if command -v docker >/dev/null 2>&1; then
         log_info "Docker уже установлен"
         return 0
     fi
     
-    log_info "Установка Docker..."
+    log_info "Установка Docker"
     curl -fsSL https://get.docker.com | sh    
     sudo usermod -aG docker $USER
 
@@ -50,7 +44,7 @@ install_docker() {
 }
 
 install_platformio_udev() {
-    log_info "Проверка udev правил для PlatformIO..."
+    log_info "Проверка udev правил для PlatformIO"
     UDEV_RULES_FILE="/etc/udev/rules.d/99-platformio-udev.rules"
     UDEV_RULES_URL="https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules"
     
@@ -60,7 +54,7 @@ install_platformio_udev() {
         return 0
     fi
     
-    log_info "Загрузка и установка udev правил для PlatformIO..."
+    log_info "Загрузка и установка udev правил для PlatformIO"
     curl -fsSL "$UDEV_RULES_URL" | sudo tee "$UDEV_RULES_FILE" > /dev/null
     sudo chown root:root "$UDEV_RULES_FILE"
     sudo chmod 0644 "$UDEV_RULES_FILE"
@@ -71,13 +65,13 @@ install_platformio_udev() {
 }
 
 configure_config_txt() {
-    log_info "Проверка конфигурации /boot/firmware/config.txt..."    
+    log_info "Проверка конфигурации /boot/firmware/config.txt"    
     CONFIG_FILE="/boot/firmware/config.txt"
     MODIFIED=false
     
     # Проверка и отключение dtparam=audio=on
     if grep -q "^dtparam=audio=on" "$CONFIG_FILE"; then
-        log_info "Отключение dtparam=audio=on..."
+        log_info "Отключение dtparam=audio=on"
         sudo sed -i 's/^dtparam=audio=on/#dtparam=audio=on/' "$CONFIG_FILE"
         MODIFIED=true
     fi
@@ -87,28 +81,28 @@ configure_config_txt() {
     if grep -q "^dtoverlay=vc4-kms-v3d" "$CONFIG_FILE" && \
        ! grep -q "^dtoverlay=vc4-kms-v3d,noaudio" "$CONFIG_FILE" && \
        ! grep -q "^dtoverlay=vc4-kms-v3d,.*,noaudio" "$CONFIG_FILE"; then
-        log_info "Добавление noaudio к vc4-kms-v3d..."
+        log_info "Добавление noaudio к vc4-kms-v3d"
         sudo sed -i 's/^dtoverlay=vc4-kms-v3d/dtoverlay=vc4-kms-v3d,noaudio/' "$CONFIG_FILE"
         MODIFIED=true
     fi
     
     # Проверка и добавление dtparam=uart0=on
     if ! grep -q "^dtparam=uart0=on" "$CONFIG_FILE"; then
-        log_info "Добавление dtparam=uart0=on..."
+        log_info "Добавление dtparam=uart0=on"
         echo "dtparam=uart0=on" | sudo tee -a "$CONFIG_FILE" > /dev/null
         MODIFIED=true
     fi
     
     # Проверка и добавление dtparam=i2s=on
     if ! grep -q "^dtparam=i2s=on" "$CONFIG_FILE"; then
-        log_info "Добавление dtparam=i2s=on..."
+        log_info "Добавление dtparam=i2s=on"
         echo "dtparam=i2s=on" | sudo tee -a "$CONFIG_FILE" > /dev/null
         MODIFIED=true
     fi
     
     # Проверка и добавление dtoverlay=googlevoicehat-soundcard
     if ! grep -q "^dtoverlay=googlevoicehat-soundcard" "$CONFIG_FILE"; then
-        log_info "Добавление dtoverlay=googlevoicehat-soundcard..."
+        log_info "Добавление dtoverlay=googlevoicehat-soundcard"
         echo "dtoverlay=googlevoicehat-soundcard" | sudo tee -a "$CONFIG_FILE" > /dev/null
         MODIFIED=true
     fi
@@ -122,7 +116,7 @@ configure_config_txt() {
 }
 
 configure_psu_current() {
-    log_info "Проверка настройки PSU_MAX_CURRENT..."
+    log_info "Проверка настройки PSU_MAX_CURRENT"
     CURRENT_CONFIG=$(sudo rpi-eeprom-config)
     
     if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT=5000"; then
@@ -130,7 +124,7 @@ configure_psu_current() {
         return 0
     fi
     
-    log_info "Настройка PSU_MAX_CURRENT=5000..."    
+    log_info "Настройка PSU_MAX_CURRENT=5000"    
     TMP_CONFIG=$(mktemp)
     echo "$CURRENT_CONFIG" > "$TMP_CONFIG"
 
@@ -148,34 +142,43 @@ configure_psu_current() {
 }
 
 clone_repository() {
-    log_info "Проверка репозитория..."
+    log_info "Проверка репозитория"
     
     if [ -d "$REPO_DIR/.git" ]; then
         log_info "Репо уже склонирован в $REPO_DIR"
-        log_info "Обновление репозитория..."
+        log_info "Обновление репозитория"
         cd "$REPO_DIR"
         git pull
         return 0
     fi
     
-    log_info "Клонирование репозитория..."
+    log_info "Клонирование репозитория"
     git clone "$REPO_URL" "$REPO_DIR"
     cd "$REPO_DIR"
 
-    log_info "Добавление флага autostart..."
+    log_info "Добавление флага autostart"
     touch "$REPO_DIR/.autostart"
 }
 
 run_docker_compose() {
-    log_info "Запуск Docker Compose..."
+    log_info "Запуск Docker Compose"
     cd "$REPO_DIR"
     
-    log_info "Загрузка Docker образов..."
+    log_info "Загрузка Docker образов"
     sudo docker compose pull
-    log_info "Запуск Docker контейнеров..."
+
+    [ -d "$REPO_DIR/install" ] 
+    install_dir_exists=$?
+
+    log_info "Запуск Docker контейнеров"
     sudo docker compose up -d --no-build
-    sleep 10
-    log_info "Проверка запущенных контейнеров..."
+
+    if [ $install_dir_exists -ne 0 ]; then
+        log_warn "Первый запуск контейнера, задержка для завершения сборки"
+        sleep 10
+    fi
+
+    log_info "Проверка запущенных контейнеров"
     sudo docker compose ps
 }
 
@@ -189,18 +192,11 @@ setup_web_tests_service() {
         log_info "Virtual environment already exists, skipping creation"
     fi
 
-    local pkg
-    for pkg in "${REQUIREMENTS[@]}"; do
-        if ! "$VENV_DIR/bin/pip" list --format=freeze | grep -q "^${pkg}=="; then
-            log_info "Installing $pkg"
-            "$VENV_DIR/bin/pip" install "$pkg"
-        else
-            log_info "$pkg already installed, skipping"
-        fi
-    done
+    log_info "Ensuring pip dependencies"
+    $VENV_DIR/bin/pip install -q $REQUIREMENTS
 
     log_info "Ensuring $TEST_SCRIPT_PATH is up to date"
-    if ! curl -fsSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
+    if ! curl -fSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
         log_error "Failed to download $TEST_SCRIPT_URL"
     fi
     chmod +x "$TEST_SCRIPT_PATH"
@@ -257,7 +253,6 @@ WantedBy=multi-user.target
 main() {
     log_info "=== НАЧАЛО НАСТРОЙКИ RASPBERRY ==="
 
-    install_apt_packages
     install_docker
     install_platformio_udev
     configure_config_txt
@@ -275,4 +270,11 @@ main() {
 }
 
 trap 'log_error "Скрипт прерван!"; exit 1' INT TERM
+
+if [ -z "$TMUX" ]; then
+    log_warn "Установка пакетов и перезапуск внутри tmux-сессии"
+    sudo apt-get update
+    sudo apt-get install -y git curl udev tmux
+    tmux new -s rbm-setup "bash \"$0\" \"$@\"; bash" && exit
+fi
 main "$@"
