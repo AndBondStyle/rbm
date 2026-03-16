@@ -1,25 +1,25 @@
 #!/bin/bash
 
+REPO_DIR="$HOME/robomarvel"
+REPO_URL="https://git@git.sourcecraft.dev/robomarvel/rbm-runtime.git"
+SETUP_DIR="$HOME/.setup"
+VENV_DIR="$SETUP_DIR/venv"
+TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
+TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
+REQUIREMENTS=("pyserial" "nicegui")
+SERVICE_NAME="rbm-web-tests"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+NEEDS_REBOOT=false
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-REPO_URL="https://github.com/AndBondStyle/rbm"
-TARGET_DIR="$HOME/robomarvel"
-NEEDS_REBOOT=false
-
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 if [ "$EUID" -eq 0 ]; then 
     log_error "Не запускайте скрипт от пользователя root!"
@@ -27,14 +27,15 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
-check_command() {
-    command -v $1 >/dev/null 2>&1
+install_apt_packages() {
+    log_info "Установка APT пакетов..."
+    sudo apt-get update
+    sudo apt-get install -y git curl udev
 }
 
-# 1. Установка Docker
 install_docker() {
     log_info "Проверка установки Docker..."
-    if check_command docker; then
+    if command -v docker >/dev/null 2>&1; then
         log_info "Docker уже установлен"
         return 0
     fi
@@ -48,7 +49,6 @@ install_docker() {
     log_warn "Для обновления групп запустите: exec sudo su -l \$USER"
 }
 
-# 2. Установка udev правил для PlatformIO
 install_platformio_udev() {
     log_info "Проверка udev правил для PlatformIO..."
     UDEV_RULES_FILE="/etc/udev/rules.d/99-platformio-udev.rules"
@@ -70,7 +70,6 @@ install_platformio_udev() {
     log_info "Udev правила для PlatformIO успешно загружены и установлены"
 }
 
-# 3. Настройка /boot/firmware/config.txt
 configure_config_txt() {
     log_info "Проверка конфигурации /boot/firmware/config.txt..."    
     CONFIG_FILE="/boot/firmware/config.txt"
@@ -122,7 +121,6 @@ configure_config_txt() {
     fi
 }
 
-# 4. Настройка PSU_MAX_CURRENT
 configure_psu_current() {
     log_info "Проверка настройки PSU_MAX_CURRENT..."
     CURRENT_CONFIG=$(sudo rpi-eeprom-config)
@@ -149,76 +147,132 @@ configure_psu_current() {
     NEEDS_REBOOT=true
 }
 
-# 5. Клонирование репозитория
 clone_repository() {
     log_info "Проверка репозитория..."
     
-    if [ -d "$TARGET_DIR/.git" ]; then
-        log_info "Репо уже склонирован в $TARGET_DIR"
+    if [ -d "$REPO_DIR/.git" ]; then
+        log_info "Репо уже склонирован в $REPO_DIR"
         log_info "Обновление репозитория..."
-        cd "$TARGET_DIR"
+        cd "$REPO_DIR"
         git pull
         return 0
     fi
     
     log_info "Клонирование репозитория..."
-    git clone "$REPO_URL" "$TARGET_DIR"
-    cd "$TARGET_DIR"
-    log_info "Репо успешно склонирован"
+    git clone "$REPO_URL" "$REPO_DIR"
+    cd "$REPO_DIR"
+
+    log_info "Добавление флага autostart..."
+    touch "$REPO_DIR/.autostart"
 }
 
-# 6. Запуск docker compose
 run_docker_compose() {
     log_info "Запуск Docker Compose..."
-    cd "$TARGET_DIR"
+    cd "$REPO_DIR"
     
     log_info "Загрузка Docker образов..."
     sudo docker compose pull
     log_info "Запуск Docker контейнеров..."
-    sudo docker compose up -d
+    sudo docker compose up -d --no-build
+    sleep 10
     log_info "Проверка запущенных контейнеров..."
     sudo docker compose ps
 }
 
-main() {
-    log_info "Начало настройки Raspberry Pi"
+setup_web_tests_service() {
+    mkdir -p "$SETUP_DIR"
 
-    log_info "Обновление списка пакетов..."
-    sudo apt-get update
-    log_info "Установка необходимых утилит..."
-    sudo apt-get install -y git curl udev
-    
+    if [[ ! -d "$VENV_DIR" ]]; then
+        log_info "Creating virtual environment in $VENV_DIR"
+        python3 -m venv "$VENV_DIR"
+    else
+        log_info "Virtual environment already exists, skipping creation"
+    fi
+
+    local pkg
+    for pkg in "${REQUIREMENTS[@]}"; do
+        if ! "$VENV_DIR/bin/pip" list --format=freeze | grep -q "^${pkg}=="; then
+            log_info "Installing $pkg"
+            "$VENV_DIR/bin/pip" install "$pkg"
+        else
+            log_info "$pkg already installed, skipping"
+        fi
+    done
+
+    log_info "Ensuring $TEST_SCRIPT_PATH is up to date"
+    if ! curl -fsSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
+        log_error "Failed to download $TEST_SCRIPT_URL"
+    fi
+    chmod +x "$TEST_SCRIPT_PATH"
+
+    log_info "Setting up systemd service $SERVICE_NAME"
+    local service_unit="[Unit]
+Description=RBM Web Tests
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$SETUP_DIR
+ExecStart=$VENV_DIR/bin/python $TEST_SCRIPT_PATH
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"
+
+    if [[ -f "$SERVICE_FILE" ]]; then
+        local existing
+        existing=$(sudo cat "$SERVICE_FILE")
+        if [[ "$existing" == "$service_unit" ]]; then
+            log_info "Service file already up to date"
+        else
+            log_info "Updating existing service file"
+            echo "$service_unit" | sudo tee "$SERVICE_FILE" >/dev/null
+            sudo systemctl daemon-reload
+        fi
+    else
+        log_info "Creating new service file"
+        echo "$service_unit" | sudo tee "$SERVICE_FILE" >/dev/null
+        sudo systemctl daemon-reload
+    fi
+
+    if ! sudo systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        log_info "Enabling service to start on boot"
+        sudo systemctl enable "$SERVICE_NAME"
+    else
+        log_info "Service already enabled"
+    fi
+
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        log_info "Starting service now"
+        sudo systemctl start "$SERVICE_NAME"
+    else
+        log_info "Service is already running"
+    fi
+}
+
+main() {
+    log_info "=== НАЧАЛО НАСТРОЙКИ RASPBERRY ==="
+
+    install_apt_packages
     install_docker
     install_platformio_udev
     configure_config_txt
     configure_psu_current
     clone_repository
     run_docker_compose
+    setup_web_tests_service
     
-    echo ""
     log_info "=== НАСТРОЙКА ЗАВЕРШЕНА ==="
-    
     if [ "$NEEDS_REBOOT" = true ]; then
-        log_warn "ТРЕБУЕТСЯ ПЕРЕЗАГРУЗКА СИСТЕМЫ"
-        echo ""
-        
-        read -p "Выполнить перезагрузку сейчас? (y/N): " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Перезагрузка системы..."
-            sudo reboot
-        else
-            log_info "Перезагрузите систему позже командой: sudo reboot"
-        fi
-    else
-        log_info "Перезагрузка не требуется"
+        log_warn "Запланирована перезагрузка через 1 минуту"
+        log_warn "Для отмены перезагрузки: sudo shutdown -c"
+        sudo shutdown -r +1
     fi
-    
-    log_info "Настройка завершена успешно!"
 }
 
-# Обработка ошибок
 trap 'log_error "Скрипт прерван!"; exit 1' INT TERM
-
-# Запуск основной функции
 main "$@"

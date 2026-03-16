@@ -31,7 +31,7 @@ import asyncio
 import time
 import abc
 from typing import Callable, ClassVar
-from nicegui import ui, app
+from nicegui import ui
 from dataclasses import dataclass
 import traceback
 from serial import Serial
@@ -285,14 +285,15 @@ class MCUTest(BaseTest):
         
         return packets
 
-    def open_serial(self):
+    async def open_serial(self):
+        await self.shell("docker stop ros", check=False, timeout=10)
         ser = Serial("/dev/ttyAMA0", baudrate=115200, timeout=0.1, exclusive=True)
         ser.reset_input_buffer()
         ser.reset_output_buffer()
         return ser
 
     async def test(self):
-        ser = self.open_serial()
+        ser = await self.open_serial()
         packets = await self.read_serial(ser)
 
         if not packets:
@@ -317,7 +318,7 @@ class MoveTest(MCUTest):
     name = "SIMPLE MOVE TEST"
 
     async def test(self):
-        ser = self.open_serial()
+        ser = await self.open_serial()
         packets = []
 
         SPEED = 10.0
@@ -557,5 +558,4 @@ def main_page():
                 terminal.write(intro)
 
 
-sp.check_call("docker stop ros", shell=True, stderr=sp.DEVNULL, stdout=sp.DEVNULL)
 ui.run(title="RBM TESTS", show=False, port=8888, favicon="✅", reconnect_timeout=10)
