@@ -1,6 +1,8 @@
 launch:
   - include:
+      ### !!! SLAM / LOCALIZATION MODE SWITCH
       file: $(find-pkg-share slam_toolbox)/launch/online_async_launch.py
+      #file: $(find-pkg-share slam_toolbox)/launch/localization_launch.py
       arg:
       - { name: use_sim_time, value: "false" }
       - { name: slam_params_file, value: "$(find-pkg-share main)/launch/params.yaml" }

@@ -30,7 +30,17 @@ slam_toolbox:
     base_frame: base_link
     scan_topic: /scan
     use_map_saver: true
-    mode: mapping #localization
+
+    ### !!! SLAM MODE
+    mode: mapping
+    use_scan_matching: false
+    use_scan_barycenter: false
+
+    ### !!! LOCALIZATION MODE
+#    mode: localization
+#    map_file_name: /src/maps/mk_v2
+#    use_scan_matching: true
+#    use_scan_barycenter: true
 
     # if you'd like to immediately start continuing a map at a given pose
     # or at the dock, but they are mutually exclusive, if pose is given
@@ -43,7 +53,7 @@ slam_toolbox:
     throttle_scans: 1
     transform_publish_period: 0.02 #if 0 never publishes odometry
     map_update_interval: 5.0
-    resolution: 0.05
+    resolution: 0.025
     restamp_tf: false
     min_laser_range: 0.0 #for rastering images
     max_laser_range: 12.0 #for rastering images
@@ -54,8 +64,8 @@ slam_toolbox:
     enable_interactive_mode: false
 
     # General Parameters
-    use_scan_matching: false # true
-    use_scan_barycenter: false # true
+    #use_scan_matching: false # true
+    #use_scan_barycenter: false # true
     minimum_travel_distance: 0.1
     minimum_travel_heading: 0.1
     scan_buffer_size: 10
@@ -176,9 +186,9 @@ controller_server:
       cost_scaling_gain: 1.0
 
       use_rotate_to_heading: true
-      rotate_to_heading_min_angle: 0.3
-      rotate_to_heading_angular_vel: 0.5
-      max_angular_accel: 2.0
+      rotate_to_heading_min_angle: 0.5
+      rotate_to_heading_angular_vel: 1.2
+      max_angular_accel: 8.0
 
       max_robot_pose_search_dist: 10.0
       min_distance_to_obstacle: 0.0
@@ -197,7 +207,7 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.05
+      resolution: 0.025
       robot_radius: 0.08
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
@@ -237,7 +247,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       robot_radius: 0.08
-      resolution: 0.05
+      resolution: 0.025
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:

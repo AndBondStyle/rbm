@@ -11,15 +11,29 @@ from dataclasses import dataclass
 import math
 import struct
 
+LEFT_GAIN = 1.005
+RIGHT_GAIN = 1.0
+
 WHEEL_RADIUS = 0.021
 WHEEL_BASE = 0.128
 
-MAX_LINEAR = 0.1          # m/s
-MAX_ANGULAR = 1.0         # rad/s
-MAX_ACCEL_LINEAR = 5.5    # m/s² (accel + decel)
-MAX_ACCEL_ANGULAR = 20.0  # rad/s² (accel + decel)
+MAX_LINEAR = 0.3          # m/s
+MAX_ANGULAR = 10.0         # rad/s
+
+MAX_ACCEL_LINEAR = 0.1  # m/s² (accel + decel)
+MAX_ACCEL_ANGULAR = 6.0  # rad/s² (accel + decel)
+
+MAX_DECEL_LINEAR = 1.8
+MAX_DECEL_ANGULAR = 8.0
+
 MAX_WHEEL_SPEED = 35      # rad/s
 CONTROL_HZ = 30
+
+TURN_GAIN = 1.8
+LINEAR_GAIN = 2
+
+MIN_INPLACE_ANGULAR = 1.2
+INPLACE_LINEAR_EPS = 0.03
 
 LIN_ACCEL = MAX_ACCEL_LINEAR / CONTROL_HZ
 ANG_ACCEL = MAX_ACCEL_ANGULAR / CONTROL_HZ
@@ -27,6 +41,12 @@ ANG_ACCEL = MAX_ACCEL_ANGULAR / CONTROL_HZ
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
 
+
+def ramp(current, target, accel_step, decel_step):
+    step = accel_step if abs(target) > abs(current) else decel_step
+    if target > current:
+        return min(current + step, target)
+    return max(current - step, target)
 
 @dataclass
 class Feedback:
@@ -86,6 +106,7 @@ class HardwareNode(Node):
         self.v_right = 0.0
 
         self.last_feedback: Feedback = None
+        self.last_cmd_time = self.get_clock().now()
         self.ser = Serial(port=PORT, baudrate=SPEED, timeout=0.1, exclusive=True)
         self.get_logger().info("Serial подключен")
 
@@ -129,7 +150,7 @@ class HardwareNode(Node):
 
             odom = Odometry()
             odom.child_frame_id = "base_link"
-            odom.header.frame_id = "base_link"
+            odom.header.frame_id = "odom"
             odom.header.stamp = now
             linear_vel = (feedback.left_speed + feedback.right_speed) * self.R / 2
             odom.twist.twist.linear.x = linear_vel
@@ -139,22 +160,44 @@ class HardwareNode(Node):
             if abs(feedback.left_speed) < 0.001 and abs(feedback.right_speed) < 0.001:
                 odom.twist.covariance[0] = 0.000001
                 odom.twist.covariance[35] = 0.000001
+            angular_vel = (feedback.right_speed - feedback.left_speed) * self.R / self.L
+            odom.twist.twist.angular.z = angular_vel
             self.odom_pub.publish(odom)
 
     def cmd_callback(self, msg: Twist):
-        v = msg.linear.x
-        w = msg.angular.z
+        self.last_cmd_time = self.get_clock().now()
+        v = msg.linear.x * LINEAR_GAIN
+        w = msg.angular.z * TURN_GAIN
+
         v = math.copysign(min(abs(v), MAX_LINEAR), v)
-        if abs(w) > 0.09:
-            w = math.copysign(max(abs(w), 0.3), w)
         w = math.copysign(min(abs(w), MAX_ANGULAR), w)
+
+        if abs(v) < INPLACE_LINEAR_EPS and abs(w) > 1e-3:
+            w = math.copysign(max(abs(w), MIN_INPLACE_ANGULAR), w)
+            
         self.target_v, self.target_w = v, w
 
     def update(self):
-        self.current_v = self.target_v
-        self.current_w = self.target_w
-        self.v_left = (self.current_v - self.current_w * self.L / 2) / self.R
-        self.v_right = (self.current_v + self.current_w * self.L / 2) / self.R
+        if (self.get_clock().now() - self.last_cmd_time).nanoseconds * 1e-9 > 0.3:
+            # print("TIMEOUT?")
+            self.target_v = 0.0
+            self.target_w = 0.0
+        self.current_v = ramp(self.current_v, self.target_v,
+                     MAX_ACCEL_LINEAR / CONTROL_HZ,
+                     MAX_DECEL_LINEAR / CONTROL_HZ)
+
+        self.current_w = ramp(self.current_w, self.target_w,
+                           MAX_ACCEL_ANGULAR / CONTROL_HZ,
+                           MAX_DECEL_ANGULAR / CONTROL_HZ)
+                           
+        # self.current_v, self.current_w = self.target_v, self.target_w
+        self.v_left = ((self.current_v - self.current_w * self.L / 2) / self.R) * LEFT_GAIN
+        self.v_right = ((self.current_v + self.current_w * self.L / 2) / self.R) * RIGHT_GAIN
+
+        peak = max(abs(self.v_left), abs(self.v_right), 1e-9)
+        scale = min(1.0, MAX_WHEEL_SPEED / peak)
+        self.v_left *= scale
+        self.v_right *= scale
 
         buf = struct.pack("<ffB", self.v_left, self.v_right, 0)
         buf = b"\xA0" + buf
