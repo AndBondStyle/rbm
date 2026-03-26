@@ -7,6 +7,9 @@ services:
     privileged: true
     restart: always
     entrypoint: ["/src/entrypoint.sh"]
+    environment:
+      ROBOT_ID: "${ROBOT_ID}"
+      ROBOT_ADDRESS: "${ROBOT_ADDRESS}"
     ports:
       - 8765:8765      # Foxglove Websocket
       - 8080:8080      # Generic HTTP
