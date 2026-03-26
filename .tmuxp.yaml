@@ -4,7 +4,7 @@ windows:
       - ros2 launch main main.yaml
   - panes:
       - start_directory: /src/streaming
-        shell_command: export MTX_WEBRTCADDITIONALHOSTS=$ROBOT_ADDRESS && ./mediamtx mediamtx.yaml
+        shell_command: export MTX_WEBRTCADDITIONALHOSTS=$ROBOT_ADDRESS && ./install.sh && ./mediamtx mediamtx.yaml
   - panes:
       - start_directory: /src/jupyter
-        shell_command: jupyter lab --allow-root --ip=0.0.0.0 --port=8080 --no-browser --ServerApp.token='' --ServerApp.password=''
+        shell_command: pip install jupyterlab && jupyter lab --allow-root --ip=0.0.0.0 --port=8080 --no-browser --ServerApp.token='' --ServerApp.password=''
