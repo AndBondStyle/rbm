@@ -8,3 +8,5 @@ windows:
   - panes:
       - start_directory: /src/jupyter
         shell_command: pip install jupyterlab && jupyter lab --allow-root --ip=0.0.0.0 --port=8080 --no-browser --ServerApp.token='' --ServerApp.password=''
+  - panes:
+      - shell_command: sleep 5 && python3 scripts/goal_proxy.py
