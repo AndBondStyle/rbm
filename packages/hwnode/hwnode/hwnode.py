@@ -11,18 +11,23 @@ from dataclasses import dataclass
 import math
 import struct
 
-WHEEL_RADIUS = 0.021
-WHEEL_BASE = 0.128
+WHEEL_RADIUS = 0.021  # m
+WHEEL_BASE = 0.128  # m
+MAX_LINEAR = 0.3  # m/s
+MAX_ANGULAR = 2.5  # rad/s
+MAX_ACCEL_LINEAR = 0.1  # m/s²
+MAX_ACCEL_ANGULAR = 5.0  # rad/s²
+MAX_DECEL_LINEAR = 2.0  # m/s²
+MAX_DECEL_ANGULAR = 5.0  # rad/s²
+MAX_WHEEL_SPEED = 35.0  # rad/s
 
-MAX_LINEAR = 0.1          # m/s
-MAX_ANGULAR = 1.0         # rad/s
-MAX_ACCEL_LINEAR = 5.5    # m/s² (accel + decel)
-MAX_ACCEL_ANGULAR = 20.0  # rad/s² (accel + decel)
-MAX_WHEEL_SPEED = 35      # rad/s
 CONTROL_HZ = 30
+ANGULAR_GAIN = 1.8
+LINEAR_GAIN = 2.0
 
-LIN_ACCEL = MAX_ACCEL_LINEAR / CONTROL_HZ
-ANG_ACCEL = MAX_ACCEL_ANGULAR / CONTROL_HZ
+MIN_INPLACE_ANGULAR = 0.8
+INPLACE_ANGULAR_THRESHOLD = 0.1
+INPLACE_LINEAR_THRESHOLD = 0.05
 
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
@@ -86,15 +91,15 @@ class HardwareNode(Node):
         self.v_right = 0.0
 
         self.last_feedback: Feedback = None
+        self.last_cmd_time = self.get_clock().now()
         self.ser = Serial(port=PORT, baudrate=SPEED, timeout=0.1, exclusive=True)
         self.get_logger().info("Serial подключен")
 
         self.control_timer = self.create_timer(1.0 / CONTROL_HZ, self.update)
-        self.cmd_sub = self.create_subscription(Twist, "/cmd_vel", self.cmd_callback, 1)  # /hardware/cmd
+        self.cmd_sub = self.create_subscription(Twist, "/cmd_vel", self.cmd_callback, 1)
         self.imu_pub = self.create_publisher(Imu, "/hardware/imu", 1)
         self.status_pub = self.create_publisher(Float32MultiArray, "/hardware/status", 1)
         self.odom_pub = self.create_publisher(Odometry, "/hardware/odom", 1)
-        # self.cmd_flt_pub = self.create_publisher(Twist, "/hardware/cmd/filtered", 1)
 
         self.read_thread = Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
@@ -113,8 +118,19 @@ class HardwareNode(Node):
 
             now = self.get_clock().now().to_msg()
 
+            status = Float32MultiArray()
+            status.data = [
+                self.v_left,
+                feedback.left_speed,
+                feedback.left_angle,
+                self.v_right,
+                feedback.right_speed,
+                feedback.right_angle,
+            ]
+            self.status_pub.publish(status)
+
             imu = Imu()
-            imu.header.frame_id = "base_link"  # FIXME
+            imu.header.frame_id = "base_link"
             imu.header.stamp = now
             imu.orientation_covariance = [-1.0] + [0.0] * 8
             imu.linear_acceleration_covariance = [-1.0] + [0.0] * 8
@@ -142,19 +158,51 @@ class HardwareNode(Node):
             self.odom_pub.publish(odom)
 
     def cmd_callback(self, msg: Twist):
-        v = msg.linear.x
-        w = msg.angular.z
+        self.last_cmd_time = self.get_clock().now()
+        v = msg.linear.x * LINEAR_GAIN
+        w = msg.angular.z * ANGULAR_GAIN
+
         v = math.copysign(min(abs(v), MAX_LINEAR), v)
-        if abs(w) > 0.09:
-            w = math.copysign(max(abs(w), 0.3), w)
         w = math.copysign(min(abs(w), MAX_ANGULAR), w)
+
+        if abs(v) < INPLACE_LINEAR_THRESHOLD and abs(w) > INPLACE_ANGULAR_THRESHOLD:
+            w = math.copysign(max(abs(w), MIN_INPLACE_ANGULAR), w)
+        elif abs(w) < INPLACE_ANGULAR_THRESHOLD:
+            w = 0.0
+
         self.target_v, self.target_w = v, w
+        print(self.target_v, self.target_w)
+
+    def ramp(self, current, target, accel_step, decel_step):
+        step = accel_step if abs(target) > abs(current) else decel_step
+        if target > current:
+            return min(current + step, target)
+        return max(current - step, target)
 
     def update(self):
-        self.current_v = self.target_v
-        self.current_w = self.target_w
-        self.v_left = (self.current_v - self.current_w * self.L / 2) / self.R
-        self.v_right = (self.current_v + self.current_w * self.L / 2) / self.R
+        if (self.get_clock().now() - self.last_cmd_time).nanoseconds * 1e-9 > 0.3:
+            self.target_v = 0.0
+            self.target_w = 0.0
+
+        self.current_v = self.ramp(
+            self.current_v,
+            self.target_v,
+            MAX_ACCEL_LINEAR / CONTROL_HZ,
+            MAX_DECEL_LINEAR / CONTROL_HZ,
+        )
+        self.current_w = self.ramp(
+            self.current_w,
+            self.target_w,
+            MAX_ACCEL_ANGULAR / CONTROL_HZ,
+            MAX_DECEL_ANGULAR / CONTROL_HZ,
+        )
+
+        v_left = (self.current_v - self.current_w * self.L / 2) / self.R
+        v_right = (self.current_v + self.current_w * self.L / 2) / self.R
+        peak = max(abs(self.v_left), abs(self.v_right), 1e-9)
+        scale = min(1.0, MAX_WHEEL_SPEED / peak)
+        self.v_left = v_left * scale
+        self.v_right = v_right * scale
 
         buf = struct.pack("<ffB", self.v_left, self.v_right, 0)
         buf = b"\xA0" + buf
@@ -179,5 +227,5 @@ def main():
         rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
