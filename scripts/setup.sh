@@ -146,16 +146,16 @@ run_docker_compose() {
     log_info "Загрузка Docker образов"
     sudo docker compose pull
 
-    [ -d "$REPO_DIR/install" ] 
-    install_dir_exists=$?
+    # [ -d "$REPO_DIR/install" ] 
+    # install_dir_exists=$?
 
     log_info "Запуск Docker контейнеров"
     sudo docker compose up -d --no-build
 
-    if [ $install_dir_exists -ne 0 ]; then
-        log_warn "Первый запуск контейнера, задержка для завершения сборки"
-        sleep 10
-    fi
+    # if [ $install_dir_exists -ne 0 ]; then
+    #     log_warn "Первый запуск контейнера, задержка для завершения сборки"
+    #     sleep 10
+    # fi
 
     log_info "Проверка запущенных контейнеров"
     sudo docker compose ps
