@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 REPO_DIR="$HOME/robomarvel"
 REPO_URL="https://github.com/AndBondStyle/rbm"
@@ -171,7 +172,7 @@ setup_web_tests_service() {
     fi
 
     log_info "Ensuring pip dependencies"
-    $VENV_DIR/bin/pip install -q $REQUIREMENTS
+    $VENV_DIR/bin/pip install --resume-retries 10 --proxy "http://10.1.30.57:10809" $REQUIREMENTS
 
     log_info "Ensuring $TEST_SCRIPT_PATH is up to date"
     if ! curl -fSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
