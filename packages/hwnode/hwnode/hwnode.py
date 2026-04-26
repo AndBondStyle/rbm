@@ -41,6 +41,8 @@ ANG_ACCEL = MAX_ACCEL_ANGULAR / CONTROL_HZ
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
 
+SPEED_SCALE = 0.53
+
 
 def ramp(current, target, accel_step, decel_step):
     step = accel_step if abs(target) > abs(current) else decel_step
@@ -191,13 +193,17 @@ class HardwareNode(Node):
                            MAX_DECEL_ANGULAR / CONTROL_HZ)
                            
         # self.current_v, self.current_w = self.target_v, self.target_w
-        self.v_left = ((self.current_v - self.current_w * self.L / 2) / self.R) * LEFT_GAIN
-        self.v_right = ((self.current_v + self.current_w * self.L / 2) / self.R) * RIGHT_GAIN
+        v_left = (self.current_v - self.current_w * self.L / 2) / self.R
+        v_right = (self.current_v + self.current_w * self.L / 2) / self.R
 
-        peak = max(abs(self.v_left), abs(self.v_right), 1e-9)
+        v_left *= SPEED_SCALE
+        v_right *= SPEED_SCALE
+
+        peak = max(abs(v_left), abs(v_right), 1e-9)
         scale = min(1.0, MAX_WHEEL_SPEED / peak)
-        self.v_left *= scale
-        self.v_right *= scale
+
+        self.v_left = v_left * scale
+        self.v_right = v_right * scale
 
         buf = struct.pack("<ffB", self.v_left, self.v_right, 0)
         buf = b"\xA0" + buf
