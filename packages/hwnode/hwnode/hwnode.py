@@ -143,7 +143,7 @@ class HardwareNode(Node):
             if self.battery_filtered is None:
                 self.battery_filtered = voltage
             else:
-                self.battery_filtered = 0.9 * self.battery_filtered + 0.1 * voltage
+                self.battery_filtered = 0.999 * self.battery_filtered + 0.001 * voltage
             batt.data = self.battery_filtered
             self.battery_pub.publish(batt)
 
