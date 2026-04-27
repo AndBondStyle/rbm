@@ -106,6 +106,7 @@ class HardwareNode(Node):
         self.current_w = 0.0
         self.v_left = 0.0
         self.v_right = 0.0
+        self.battery_filtered = None
 
         self.last_feedback: Feedback = None
         self.last_cmd_time = self.get_clock().now()
@@ -139,7 +140,11 @@ class HardwareNode(Node):
 
             batt = Float32()
             voltage = feedback.left_lidar / 10
-            batt.data = voltage
+            if self.battery_filtered is None:
+                self.battery_filtered = voltage
+            else:
+                self.battery_filtered = 0.9 * self.battery_filtered + 0.1 * voltage
+            batt.data = self.battery_filtered
             self.battery_pub.publish(batt)
 
             imu = Imu()
