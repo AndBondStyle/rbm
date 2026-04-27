@@ -3,7 +3,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from serial import Serial
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Float32
 from sensor_msgs.msg import Imu
 from threading import Thread
 from hwnode.crc8 import crc8
@@ -118,6 +118,7 @@ class HardwareNode(Node):
         self.status_pub = self.create_publisher(Float32MultiArray, "/hardware/status", 1)
         self.odom_pub = self.create_publisher(Odometry, "/hardware/odom", 1)
         # self.cmd_flt_pub = self.create_publisher(Twist, "/hardware/cmd/filtered", 1)
+        self.battery_pub = self.create_publisher(Float32, "/hardware/battery", 1)
 
         self.read_thread = Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
@@ -135,6 +136,11 @@ class HardwareNode(Node):
             if feedback is None: continue
 
             now = self.get_clock().now().to_msg()
+
+            batt = Float32()
+            voltage = feedback.left_lidar / 10
+            batt.data = voltage
+            self.battery_pub.publish(batt)
 
             imu = Imu()
             imu.header.frame_id = "base_link"  # FIXME
