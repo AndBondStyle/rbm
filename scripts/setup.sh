@@ -187,7 +187,7 @@ run_docker_compose() {
     log_info "Запуск Docker контейнера"
     sudo docker compose up -d --no-build
 
-    if [ $install_dir_exists -ne 0 ]; then
+    if [ $status -ne 0 ]; then
         log_warn "Первый запуск контейнера, задержка для завершения сборки"
         sleep 10
     fi
