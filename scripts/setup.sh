@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 REPO_DIR="$HOME/robomarvel"
 REPO_URL="https://github.com/AndBondStyle/rbm"
@@ -64,6 +65,21 @@ install_platformio_udev() {
     log_info "Udev правила для PlatformIO успешно загружены и установлены"
 }
 
+install_platformio_tools() {
+    log_info "Установка инструментов PlatformIO"
+    PIO_DOWNLOAD_URL="https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py"
+
+    if command -v pio >/dev/null 2>&1; then
+        log_info "PlatformIO уже установлен"
+        return 0
+    fi
+
+    curl -fsSL -o $SETUP_DIR/get-platformio.py $PIO_DOWNLOAD_URL
+    python3 $SETUP_DIR/get-platformio.py
+    sudo ln -s ~/.platformio/penv/bin/pio /usr/local/bin/pio
+    pio pkg install --global --tool platformio/tool-stm32flash
+}
+
 configure_config_txt() {
     log_info "Проверка конфигурации /boot/firmware/config.txt"    
     CONFIG_FILE="/boot/firmware/config.txt"
@@ -115,7 +131,7 @@ configure_config_txt() {
     fi
 }
 
-configure_psu_current() {
+configure_eeprom() {
     log_info "Проверка настройки PSU_MAX_CURRENT"
     CURRENT_CONFIG=$(sudo rpi-eeprom-config)
     
@@ -136,7 +152,6 @@ configure_psu_current() {
 
     sudo rpi-eeprom-config --apply "$TMP_CONFIG"
     rm "$TMP_CONFIG"
-    
     log_warn "Конфигурация EEPROM обновлена"
     NEEDS_REBOOT=true
 }
@@ -167,13 +182,12 @@ run_docker_compose() {
     log_info "Загрузка Docker образов"
     sudo docker compose pull
 
-    [ -d "$REPO_DIR/install" ] 
-    install_dir_exists=$?
+    status=0 && [ -d "$REPO_DIR/install" ] || status=$?
 
-    log_info "Запуск Docker контейнеров"
+    log_info "Запуск Docker контейнера"
     sudo docker compose up -d --no-build
 
-    if [ $install_dir_exists -ne 0 ]; then
+    if [ $status -ne 0 ]; then
         log_warn "Первый запуск контейнера, задержка для завершения сборки"
         sleep 10
     fi
@@ -182,7 +196,7 @@ run_docker_compose() {
     sudo docker compose ps
 }
 
-setup_web_tests_service() {
+install_tests_service() {
     mkdir -p "$SETUP_DIR"
 
     if [[ ! -d "$VENV_DIR" ]]; then
@@ -193,7 +207,12 @@ setup_web_tests_service() {
     fi
 
     log_info "Ensuring pip dependencies"
-    $VENV_DIR/bin/pip install -q $REQUIREMENTS
+    if [ -n "$PIP_PROXY" ]; then
+        log_info 'Using proxy from $PIP_PROXY'
+        $VENV_DIR/bin/pip install --proxy "$PIP_PROXY" $REQUIREMENTS
+    else
+        $VENV_DIR/bin/pip install $REQUIREMENTS
+    fi
 
     log_info "Ensuring $TEST_SCRIPT_PATH is up to date"
     if ! curl -fSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
@@ -255,11 +274,12 @@ main() {
 
     install_docker
     install_platformio_udev
+    install_platformio_tools
+    install_tests_service
     configure_config_txt
-    configure_psu_current
+    configure_eeprom
     clone_repository
     run_docker_compose
-    setup_web_tests_service
     
     log_info "=== НАСТРОЙКА ЗАВЕРШЕНА ==="
     if [ "$NEEDS_REBOOT" = true ]; then
