@@ -1,5 +1,0 @@
-session_name: main
-suppress_history: false
-windows:
-  - panes:
-      - ros2 launch main main.yaml

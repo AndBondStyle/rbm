@@ -1,9 +1,7 @@
 launch:
   - node:
-      pkg: "hwnode"
-      exec: "hwnode"
-      name: "hwnode"
-      output: "screen"
+      pkg: hwnode
+      exec: hwnode
   - include:
       file: $(find-pkg-share main)/launch/bridge.yaml
   - include:
@@ -17,4 +15,7 @@ launch:
   - include:
       file: $(find-pkg-share main)/launch/slam.yaml
   - include:
-      file: $(find-pkg-share main)/launch/camera.yaml
+      file: $(find-pkg-share main)/launch/camera_stream.yaml
+#   - node:
+#       pkg: detection
+#       exec: detection

@@ -177,8 +177,8 @@ controller_server:
 
       use_rotate_to_heading: true
       rotate_to_heading_min_angle: 0.5
-      rotate_to_heading_angular_vel: 1.0
-      max_angular_accel: 100.0
+      rotate_to_heading_angular_vel: 1.2
+      max_angular_accel: 8.0
 
       max_robot_pose_search_dist: 10.0
       min_distance_to_obstacle: 0.0

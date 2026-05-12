@@ -151,15 +151,16 @@ RUN apt update && \
 # Setup venv, picamera2, yolo, yandex speechkit
 WORKDIR /tmp/venv-setup
 ADD docker/picamera2.patch /tmp/venv-setup/picamera2.patch
-RUN patch -p1 -i /tmp/venv-setup/picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2
 RUN apt update \
     && apt install -y linux-libc-dev libcap-dev portaudio19-dev python3-pyaudio \
     && python3 -m venv /root/venv --system-site-packages \
     && . /root/venv/bin/activate \
-    && pip install picamera2 ultralytics-opencv-headless ncnn grpcio-tools \
-    && patch -p1 -i /tmp/venv-setup/picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2 \
+    && pip install picamera2 \
+    && patch -p2 -i /tmp/venv-setup/picamera2.patch -d /root/venv/lib/python3.12/site-packages/picamera2 \
+    && pip install --extra-index-url https://download.pytorch.org/whl/cpu torch torchvision "numpy<2.0.0" ncnn ultralytics-opencv-headless \
     && mkdir /root/weights \
     && python3 -c 'from ultralytics import YOLO; YOLO("/root/weights/yolo11n.pt").export(format="ncnn"); YOLO("/root/weights/yolo11n_ncnn_model", task="detect")' \
+    && pip install grpcio-tools \
     && git clone https://github.com/yandex-cloud/cloudapi \
     && cd cloudapi \
     && mkdir output \
@@ -179,6 +180,35 @@ RUN apt update \
     && cp -r output/* /root/venv/lib/python3.12/site-packages/ \
     && rm -rf /tmp/* \
     && rm -rf /var/lib/apt/lists/*
+
+# Setup Jupyter Lab
+RUN . /root/venv/bin/activate \
+    && pip install jupyterlab \
+    && mkdir -p /root/venv/share/jupyter/lab/settings \
+    && echo '{"@jupyterlab/apputils-extension:themes": {"theme": "JupyterLab Dark"}}' \
+    > /root/venv/share/jupyter/lab/settings/overrides.json \
+    && mkdir -p /root/.jupyter \
+    && echo '\
+c = get_config()\n\
+c.ServerApp.allow_root = True\n\
+c.ServerApp.ip = "0.0.0.0"\n\
+c.ServerApp.port = 8080\n\
+c.ServerApp.open_browser = False\n\
+c.ServerApp.token = ""\n\
+c.ServerApp.password = ""\n\
+    ' > /root/.jupyter/jupyter_lab_config.py
+
+# Fix setuptools version
+# https://github.com/ros2/ros2/issues/1702
+# https://github.com/ros2/ros2/issues/1094
+RUN . /root/venv/bin/activate && pip install "setuptools<80.0.0"
+
+# Setup mediamtx
+# Mediamtx bre-built custom binary is downloaded from S3
+# Built from tag v1.18.1 with docker/mediamtx.patch applied
+# https://github.com/bluenviron/mediamtx/issues/5744
+RUN wget -O /bin/mediamtx https://storage.yandexcloud.net/the-lab-storage/rbm/mediamtx-1.18.1-arm64-patched \
+    && chmod +x /bin/mediamtx
 
 # Setup .bashrc
 RUN echo '\

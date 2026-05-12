@@ -15,3 +15,4 @@ launch:
       - { name: "frame_id", value: "base_link" }
       - { name: "Odom/ResetCountdown", value: "1" }
       - { name: "publish_tf", value: true }
+    args: "--ros-args --log-level warn"

@@ -1,117 +1,126 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
-from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
-from std_msgs.msg import Header
-from cv_bridge import CvBridge
+from sensor_msgs.msg import CompressedImage
 from ultralytics import YOLO
+import cv2
 import numpy as np
+import threading
+from threading import Lock
+
 
 class YoloDetectorNode(Node):
     def __init__(self):
-        super().__init__('yolo_detector')
+        super().__init__("yolo_detector")
         
-        # Параметры
-        self.declare_parameter('model', 'yolo11n.pt')
-        self.declare_parameter('confidence', 0.5)
-        self.declare_parameter('device', 'cpu')  # или 'cuda:0' для GPU
+        # Parameters
+        self.declare_parameter("model", "yolo11s")
+        self.declare_parameter("confidence", 0.5)
+        self.declare_parameter("rtsp_url", "rtsp://localhost:8554/cam")
+        self.declare_parameter("process_fps", 1.0)
+        self.declare_parameter("jpeg_quality", 50)
         
-        model_name = self.get_parameter('model').value
-        self.confidence = self.get_parameter('confidence').value
-        device = self.get_parameter('device').value
+        self.model_name = self.get_parameter("model").value
+        self.confidence = self.get_parameter("confidence").value
+        self.rtsp_url = self.get_parameter("rtsp_url").value
+        self.process_fps = self.get_parameter("process_fps").value
+        self.jpeg_quality = self.get_parameter("jpeg_quality").value
         
-        # Загружаем модель
-        self.get_logger().info(f'Загрузка модели {model_name}...')
-        self.model = YOLO(model_name, task='detect')
-        self.model.to(device)
+        # Load YOLO model
+        self.get_logger().info(f"Loading model...")
+        self.model = YOLO(f"/root/weights/{self.model_name}", task="detect")
         
-        # cv_bridge
-        self.bridge = CvBridge()
+        # Background thread to read RTSP frames
+        self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+        if not self.cap.isOpened():
+            self.get_logger().error(f"Failed to open RTSP stream: {self.rtsp_url}")
+            raise RuntimeError("Cannot connect to RTSP stream")
+        self.get_logger().info(f"Connected to RTSP stream: {self.rtsp_url}")
         
-        # Подписка на камеру
-        self.subscription = self.create_subscription(
-            Image,
-            '/camera_node/image_raw',
-            self.image_callback,
-            10
-        )
+        self.latest_frame = None
+        self.running = True
+        self.read_thread = threading.Thread(target=self._frame_reader, daemon=True)
+        self.read_thread.start()
         
-        # Публикация детекций
-        self.detection_pub = self.create_publisher(
-            Detection2DArray,
-            '/detections',
-            10
-        )
-        
-        # Публикация изображения с разметкой
+        # Publisher for compressed annotated image
         self.annotated_pub = self.create_publisher(
-            Image,
-            '/camera/image_annotated',
+            CompressedImage,
+            "/camera/image_annotated_compressed",
             10
         )
+        
+        # Timer for frame processing
+        self.timer = self.create_timer(1.0 / self.process_fps, self.process_frame)
+        self.get_logger().info("YOLO detector ready")
 
-        self.process_timer = self.create_timer(0.5, self.process)
-        self.last_msg = None
+    def _frame_reader(self):
+        frame_read_errors = 0
+        max_errors = 5
         
-        self.get_logger().info('YOLO detector готов!')
+        while self.running:
+            ret, frame = self.cap.read()
+            if not ret:
+                frame_read_errors += 1
+                self.get_logger().warn(f"Frame read error #{frame_read_errors}")
+                if frame_read_errors >= max_errors:
+                    self.get_logger().warn("Reconnecting to RTSP stream...")
+                    self.cap.release()
+                    self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    frame_read_errors = 0
+                    if not self.cap.isOpened():
+                        self.get_logger().error("Reconnection failed")
+                continue
+            
+            frame_read_errors = 0
+            
+            # Store the latest frame
+            self.latest_frame = frame
 
-    def image_callback(self, msg):
-        self.last_msg = msg
-    
-    def process(self):
-        msg = self.last_msg
-        if msg is None: return
+        self.cap.release()
 
-        # Конвертируем ROS Image → OpenCV
-        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        # Детекция
-        results = self.model(cv_image, conf=self.confidence, verbose=False)
+    def process_frame(self):
+        # Get the latest frame
+        frame = self.latest_frame
+        if frame is None:
+            return
         
-        # Создаём сообщение с детекциями
-        detections_msg = Detection2DArray()
-        detections_msg.header = msg.header
+        # Run inference
+        result = self.model(frame, conf=self.confidence, verbose=False)[0]
+        annotated_frame = result.plot()
         
-        for result in results:
-            for box in result.boxes:
-                detection = Detection2D()
-                
-                # Bounding box
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                detection.bbox.center.position.x = (x1 + x2) / 2
-                detection.bbox.center.position.y = (y1 + y2) / 2
-                detection.bbox.size_x = x2 - x1
-                detection.bbox.size_y = y2 - y1
-                
-                # Класс и уверенность
-                hypothesis = ObjectHypothesisWithPose()
-                hypothesis.hypothesis.class_id = self.model.names[int(box.cls[0])]
-                hypothesis.hypothesis.score = float(box.conf[0])
-                detection.results.append(hypothesis)
-                
-                detections_msg.detections.append(detection)
+        # Build CompressedImage message
+        msg = CompressedImage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "camera_frame"
+        msg.format = "jpeg"
         
-        # Публикуем детекции
-        self.detection_pub.publish(detections_msg)
+        # Encode annotated image as JPEG
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+        _, buffer = cv2.imencode(".jpg", annotated_frame, encode_param)
+        msg.data = np.array(buffer).tobytes()
+        self.annotated_pub.publish(msg)
         
-        # Публикуем аннотированное изображение
-        annotated = results[0].plot()
-        annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
-        annotated_msg.header = msg.header
-        self.annotated_pub.publish(annotated_msg)
-        
-        # Логируем
-        num_detections = len(detections_msg.detections)
-        if num_detections > 0:
-            classes = [d.results[0].hypothesis.class_id for d in detections_msg.detections]
-            self.get_logger().info(f'Обнаружено {num_detections}: {classes}')
+        # Optional logging
+        objects = []
+        for box in result.boxes:
+            label = self.model.names[int(box.cls.item())]
+            objects.append({label: round(box.conf.item(), 2)})
+        self.get_logger().info(f"Detected {len(objects)} objects: {objects}")
+
+    def destroy_node(self):
+        self.running = False
+        if self.read_thread.is_alive():
+            self.read_thread.join(timeout=1.0)
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = YoloDetectorNode()
-    rclpy.spin(node)
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.destroy_node()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
