@@ -32,9 +32,11 @@ import time
 import abc
 from typing import Callable, ClassVar
 from nicegui import ui
+from starlette.requests import Request
 from dataclasses import dataclass
 import traceback
 from serial import Serial
+import socket
 import struct
 import math
 import yaml
@@ -509,11 +511,14 @@ INTRO = """
                                                                             
 """
 
+HOSTNAME = socket.gethostname()
 
-@ui.page("/")
+
+@ui.page("/tests", favicon="✅")
 def main_page():
     ui.dark_mode(value=True)
     ui.query(".nicegui-content").classes("p-0")
+    ui.page_title(f"{HOSTNAME.upper()} | TESTS")
     test_instances = []
 
     with ui.splitter(value=25).classes("w-full h-screen") as splitter:
@@ -555,4 +560,37 @@ def main_page():
                 terminal.write(intro)
 
 
-ui.run(title="RBM TESTS", show=False, port=8888, favicon="✅", reconnect_timeout=10)
+# ----------------------------------------------------------------
+
+LINKS = [
+    ("Foxglove", "category", "https://foxglove.robotics-lab.ru/?ds=foxglove-websocket&ds.url=ws%3A%2F%2F{ip}%3A8765"),
+    ("Jupyter Lab", "code", "http://{ip}:8080"),
+    ("Terminal (host)", "terminal", "http://{ip}:8100"),
+    ("Terminal (docker)", "terminal", "http://{ip}:8200"),
+    ("System Tests", "checklist", "/tests"),
+    ("Camera Stream", "videocam", "http://{ip}:8889/cam"),
+]
+
+@ui.page("/", favicon="🚀")
+async def welcome_page(request: Request):
+    ui.dark_mode(value=True)
+    ui.query(".nicegui-content").classes("p-0")
+    ui.page_title(f"{HOSTNAME.upper()} | HOME")
+    ip = request.url.hostname
+
+    with ui.column().classes("items-center justify-center w-full h-screen gap-2"):
+        ui.label(f"{HOSTNAME.upper()}").classes("text-h2 font-mono")
+        ui.label(f"IP: {ip}").classes("text-h6 font-mono mb-5")
+
+        with ui.card().classes("w-100 p-6 shadow-lg"):
+            for label, icon, url in LINKS:
+                with ui.link(
+                    target=url.format(ip=ip),
+                    new_tab=True
+                ).classes("bg-red-900 text-white no-underline rounded w-full p-2"):
+                    with ui.row().classes("items-center justify-center"):
+                        ui.icon(icon, size="md")
+                        ui.label(label.upper())
+
+
+ui.run(title="ROBOMARVEL", show=False, port=80, favicon="✅", reconnect_timeout=10)

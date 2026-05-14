@@ -8,8 +8,6 @@ VENV_DIR="$SETUP_DIR/venv"
 TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
 TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
 REQUIREMENTS="pyserial nicegui"
-SERVICE_NAME="rbm-web-tests"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 NEEDS_REBOOT=false
 
@@ -196,6 +194,39 @@ run_docker_compose() {
     sudo docker compose ps
 }
 
+helper_setup_systemd_service() {
+    local service_name="$1"
+    local unit_content="$2"
+    local service_file="/etc/systemd/system/${service_name}.service"
+    log_info "Setting up systemd service $service_name"
+
+    if [[ -f "$service_file" ]]; then
+        local existing
+        existing=$(sudo cat "$service_file" 2>/dev/null)
+        if [[ ! "$existing" == "$unit_content" ]]; then
+            log_info "Updating existing service file"
+            printf "%s" "$unit_content" | sudo tee "$service_file" >/dev/null
+            sudo systemctl daemon-reload
+            log_info "systemd daemon reloaded"
+        fi
+    else
+        log_info "Creating new service file"
+        printf "%s" "$unit_content" | sudo tee "$service_file" >/dev/null
+        sudo systemctl daemon-reload
+        log_info "systemd daemon reloaded"
+    fi
+
+    if ! sudo systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
+        log_info "Enabling $service_name to start on boot"
+        sudo systemctl enable "$service_name"
+    fi
+
+    if ! sudo systemctl is-active --quiet "$service_name"; then
+        log_info "Starting $service_name now"
+        sudo systemctl start "$service_name"
+    fi
+}
+
 install_tests_service() {
     mkdir -p "$SETUP_DIR"
 
@@ -209,18 +240,17 @@ install_tests_service() {
     log_info "Ensuring pip dependencies"
     if [ -n "$PIP_PROXY" ]; then
         log_info 'Using proxy from $PIP_PROXY'
-        $VENV_DIR/bin/pip install --proxy "$PIP_PROXY" $REQUIREMENTS
+        $VENV_DIR/bin/pip install --quiet --proxy "$PIP_PROXY" $REQUIREMENTS
     else
-        $VENV_DIR/bin/pip install $REQUIREMENTS
+        $VENV_DIR/bin/pip install --quiet $REQUIREMENTS
     fi
 
     log_info "Ensuring $TEST_SCRIPT_PATH is up to date"
-    if ! curl -fSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
+    if ! curl -fsSL "$TEST_SCRIPT_URL" -o "$TEST_SCRIPT_PATH"; then
         log_error "Failed to download $TEST_SCRIPT_URL"
     fi
     chmod +x "$TEST_SCRIPT_PATH"
 
-    log_info "Setting up systemd service $SERVICE_NAME"
     local service_unit="[Unit]
 Description=RBM Web Tests
 After=docker.service
@@ -228,45 +258,61 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=$USER
 WorkingDirectory=$SETUP_DIR
 ExecStart=$VENV_DIR/bin/python $TEST_SCRIPT_PATH
 Restart=always
 RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
-"
+WantedBy=multi-user.target"
 
-    if [[ -f "$SERVICE_FILE" ]]; then
-        local existing
-        existing=$(sudo cat "$SERVICE_FILE")
-        if [[ "$existing" == "$service_unit" ]]; then
-            log_info "Service file already up to date"
-        else
-            log_info "Updating existing service file"
-            echo "$service_unit" | sudo tee "$SERVICE_FILE" >/dev/null
-            sudo systemctl daemon-reload
-        fi
+    helper_setup_systemd_service "rbm-web-tests" "$service_unit"
+}
+
+install_web_term_services() {
+    local ttyd_binary_url="https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.aarch64"
+
+    if [ -f "$SETUP_DIR/ttyd" ] 2>&1; then
+        log_info "ttyd already installed"
     else
-        log_info "Creating new service file"
-        echo "$service_unit" | sudo tee "$SERVICE_FILE" >/dev/null
-        sudo systemctl daemon-reload
+        log_info "Downloading ttyd binary"
+        curl -fsSL -o "$SETUP_DIR/ttyd" "$ttyd_binary_url"
+        chmod +x "$SETUP_DIR/ttyd"
     fi
 
-    if ! sudo systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-        log_info "Enabling service to start on boot"
-        sudo systemctl enable "$SERVICE_NAME"
-    else
-        log_info "Service already enabled"
-    fi
+    local unit1="[Unit]
+Description=RBM Web Terminal (host)
+After=network.target
 
-    if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-        log_info "Starting service now"
-        sudo systemctl start "$SERVICE_NAME"
-    else
-        log_info "Service is already running"
-    fi
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=/home/$USER
+ExecStart=$SETUP_DIR/ttyd -W -p 8100 tmux new -A -s webtmux bash
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target"
+
+    helper_setup_systemd_service "rbm-web-term-host" "$unit1"
+
+    local unit2="[Unit]
+Description=RBM Web Terminal (docker)
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=/home/$USER
+ExecStart=$SETUP_DIR/ttyd -W -p 8200 docker exec -it ros tmux new -A -s main bash
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target"
+
+    helper_setup_systemd_service "rbm-web-term-docker" "$unit2"
 }
 
 main() {
@@ -276,6 +322,7 @@ main() {
     install_platformio_udev
     install_platformio_tools
     install_tests_service
+    install_web_term_services
     configure_config_txt
     configure_eeprom
     clone_repository
@@ -293,8 +340,8 @@ trap 'log_error "Скрипт прерван!"; exit 1' INT TERM
 
 if [ -z "$TMUX" ]; then
     log_warn "Установка пакетов и перезапуск внутри tmux-сессии"
-    sudo apt-get update
-    sudo apt-get install -y git curl udev tmux
+    sudo apt-get -qq update
+    sudo apt-get -qq install -y git curl udev tmux
     tmux new -s rbm-setup "bash \"$0\" \"$@\"; bash" && exit
 fi
 main "$@"
