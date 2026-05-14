@@ -11,7 +11,7 @@ def is_venv():
             (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix))
 
 def setup_and_relaunch():
-    venv_dir = Path("~/.setup/venv").expanduser()
+    venv_dir = Path("/home/robomarvel/.setup/venv")
     if not venv_dir.exists():
         print("Creating virtual environment...")
         venv.create(venv_dir, with_pip=True)
@@ -416,10 +416,10 @@ class DockerROSTest(BaseTest):
         return await self.shell(cmd, check=check, timeout=timeout)
 
     async def _start_container(self):
-        Path("~/robomarvel/.autostart").expanduser().touch()
+        Path("/home/robomarvel/.autostart").touch()
         await self.shell("docker stop ros", check=False, timeout=10)
         await self.shell("docker start ros", timeout=10)
-        self.log(f"Waiting for ROS to initialize...", color="yellow")
+        self.log("Waiting for ROS to initialize...", color="yellow")
         await asyncio.sleep(5)
 
     async def _check_nodes(self):
