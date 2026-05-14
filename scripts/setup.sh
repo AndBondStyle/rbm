@@ -130,28 +130,30 @@ configure_config_txt() {
 }
 
 configure_eeprom() {
-    log_info "Проверка настройки PSU_MAX_CURRENT"
-    CURRENT_CONFIG=$(sudo rpi-eeprom-config)
+    # log_info "Проверка настройки PSU_MAX_CURRENT"
+    # CURRENT_CONFIG=$(sudo rpi-eeprom-config)
     
-    if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT=5000"; then
-        log_info "PSU_MAX_CURRENT уже настроен на 5000 мА"
-        return 0
-    fi
+    # if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT=5000"; then
+    #     log_info "PSU_MAX_CURRENT уже настроен на 5000 мА"
+    #     return 0
+    # fi
     
-    log_info "Настройка PSU_MAX_CURRENT=5000"    
-    TMP_CONFIG=$(mktemp)
-    echo "$CURRENT_CONFIG" > "$TMP_CONFIG"
+    # log_info "Настройка PSU_MAX_CURRENT=5000"    
+    # TMP_CONFIG=$(mktemp)
+    # echo "$CURRENT_CONFIG" > "$TMP_CONFIG"
 
-    if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT="; then
-        sed -i 's/PSU_MAX_CURRENT=.*/PSU_MAX_CURRENT=5000/' "$TMP_CONFIG"
-    else
-        echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONFIG"
-    fi
+    # if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT="; then
+    #     sed -i 's/PSU_MAX_CURRENT=.*/PSU_MAX_CURRENT=5000/' "$TMP_CONFIG"
+    # else
+    #     echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONFIG"
+    # fi
 
-    sudo rpi-eeprom-config --apply "$TMP_CONFIG"
-    rm "$TMP_CONFIG"
-    log_warn "Конфигурация EEPROM обновлена"
-    NEEDS_REBOOT=true
+    # sudo rpi-eeprom-config --apply "$TMP_CONFIG"
+    # rm "$TMP_CONFIG"
+    # log_warn "Конфигурация EEPROM обновлена"
+    # NEEDS_REBOOT=true
+
+    sudo systemctl disable rpi-eeprom-update.service
 }
 
 clone_repository() {
