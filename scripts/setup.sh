@@ -7,7 +7,7 @@ REPO_BRANCH="hack_hse_rbm"
 
 SETUP_DIR="$HOME/.setup"
 VENV_DIR="$SETUP_DIR/venv"
-TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
+TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/hack_hse_rbm/scripts/test.py"
 TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
 REQUIREMENTS="pyserial nicegui"
 
