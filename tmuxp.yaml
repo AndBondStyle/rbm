@@ -7,3 +7,6 @@ windows:
     panes: [ros2 launch main main.yaml]
   - window_name: jupyter
     panes: [jupyter lab]
+  - window_name: goal_proxy
+    panes: 
+      - shell_command: sleep 5 && python3 scripts/goal_proxy.py
