@@ -563,7 +563,7 @@ def main_page():
 # ----------------------------------------------------------------
 
 LINKS = [
-    ("Foxglove", "category", "https://foxglove.robotics-lab.ru/?ds=foxglove-websocket&ds.url=ws%3A%2F%2F{ip}%3A8765"),
+    ("Foxglove", "category", "https://foxglove-ssl.robotics-lab.ru/?ds=foxglove-websocket&ds.url=ws%3A%2F%2F{ip}%3A8765"),
     ("Jupyter Lab", "code", "http://{ip}:8080"),
     ("Terminal (host)", "terminal", "http://{ip}:8100"),
     ("Terminal (docker)", "terminal", "http://{ip}:8200"),
