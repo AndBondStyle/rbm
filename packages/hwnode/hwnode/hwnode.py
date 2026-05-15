@@ -32,6 +32,7 @@ INPLACE_LINEAR_THRESHOLD = 0.05
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
 
+WHEELS_VELOCITY = 0.53
 
 @dataclass
 class Feedback:
@@ -197,8 +198,8 @@ class HardwareNode(Node):
             MAX_DECEL_ANGULAR / CONTROL_HZ,
         )
 
-        v_left = (self.current_v - self.current_w * self.L / 2) / self.R
-        v_right = (self.current_v + self.current_w * self.L / 2) / self.R
+        v_left = (self.current_v - self.current_w * self.L / 2) / self.R * WHEELS_VELOCITY
+        v_right = (self.current_v + self.current_w * self.L / 2) / self.R * WHEELS_VELOCITY
         peak = max(abs(self.v_left), abs(self.v_right), 1e-9)
         scale = min(1.0, MAX_WHEEL_SPEED / peak)
         self.v_left = v_left * scale
