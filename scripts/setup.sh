@@ -3,6 +3,8 @@ set -e
 
 REPO_DIR="$HOME/robomarvel"
 REPO_URL="https://github.com/AndBondStyle/rbm"
+REPO_BRANCH="hack_hse_rbm"
+
 SETUP_DIR="$HOME/.setup"
 VENV_DIR="$SETUP_DIR/venv"
 TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
@@ -161,14 +163,21 @@ clone_repository() {
     
     if [ -d "$REPO_DIR/.git" ]; then
         log_info "Репо уже склонирован в $REPO_DIR"
-        log_info "Обновление репозитория"
         cd "$REPO_DIR"
-        git pull
+
+        log_info "Обновление списка веток"
+        git fetch origin
+
+        log_info "Переключение на ветку $REPO_BRANCH"
+        git checkout "$REPO_BRANCH"
+
+        log_info "Обновление репозитория"
+        git pull origin "$REPO_BRANCH"
         return 0
     fi
     
-    log_info "Клонирование репозитория"
-    git clone "$REPO_URL" "$REPO_DIR"
+    log_info "Клонирование репозитория с веткой $REPO_BRANCH"
+    git clone -b "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
     cd "$REPO_DIR"
 
     log_info "Добавление флага autostart"
