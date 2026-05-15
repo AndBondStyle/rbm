@@ -3,7 +3,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from serial import Serial
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Float32
 from sensor_msgs.msg import Imu
 from threading import Thread
 from hwnode.crc8 import crc8
@@ -91,6 +91,8 @@ class HardwareNode(Node):
         self.v_left = 0.0
         self.v_right = 0.0
 
+        self.battery_filtered = None
+
         self.last_feedback: Feedback = None
         self.last_cmd_time = self.get_clock().now()
         self.ser = Serial(port=PORT, baudrate=SPEED, timeout=0.1, exclusive=True)
@@ -101,6 +103,7 @@ class HardwareNode(Node):
         self.imu_pub = self.create_publisher(Imu, "/hardware/imu", 1)
         self.status_pub = self.create_publisher(Float32MultiArray, "/hardware/status", 1)
         self.odom_pub = self.create_publisher(Odometry, "/hardware/odom", 1)
+        self.battery_pub = self.create_publisher(Float32, "/hardware/battery", 1)
 
         self.read_thread = Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
@@ -118,6 +121,15 @@ class HardwareNode(Node):
             if feedback is None: continue
 
             now = self.get_clock().now().to_msg()
+
+            batt = Float32()
+            voltage = feedback.left_lidar / 10
+            if self.battery_filtered is None:
+                self.battery_filtered = voltage
+            else:
+                self.battery_filtered = 0.999 * self.battery_filtered + 0.001 * voltage
+            batt.data = self.battery_filtered
+            self.battery_pub.publish(batt)
 
             status = Float32MultiArray()
             status.data = [
