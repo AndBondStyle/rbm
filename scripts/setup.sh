@@ -324,7 +324,11 @@ main() {
     install_tests_service
     install_web_term_services
     configure_config_txt
-    configure_eeprom
+
+    # FIXME: Обновление бутлоадера убивает некоторые пишки - надо исправить
+    sudo systemctl disable rpi-eeprom-update.service
+    # configure_eeprom
+
     clone_repository
     run_docker_compose
     
