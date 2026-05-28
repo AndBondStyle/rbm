@@ -8,6 +8,11 @@ VENV_DIR="$SETUP_DIR/venv"
 TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
 TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
 REQUIREMENTS="pyserial nicegui"
+RPI_EEPROM_REPO_DIR="/tmp/rpi-eeprom"
+RPI_EEPROM_URL="https://github.com/raspberrypi/rpi-eeprom.git"
+RPI_EEPROM_FREEZE_SOURCE="$RPI_EEPROM_REPO_DIR/firmware-2712/old/default/pieeprom-2024-09-10.bin"
+RPI_EEPROM_FREEZE_CONFIG="/tmp/boot.conf"
+RPI_EEPROM_FREEZE_IMAGE="/tmp/pieeprom-freeze.bin"
 
 NEEDS_REBOOT=false
 
@@ -151,6 +156,45 @@ configure_eeprom() {
     sudo rpi-eeprom-config --apply "$TMP_CONFIG"
     rm "$TMP_CONFIG"
     log_warn "Конфигурация EEPROM обновлена"
+    NEEDS_REBOOT=true
+}
+
+freeze_eeprom_version() {
+    log_info "Проверка фиксации версии EEPROM"
+
+    if sudo rpi-eeprom-config | grep -q "^FREEZE_VERSION=1" && vcgencmd bootloader_version 2>/dev/null | grep -q "^2024/09/10"; then
+        log_info "EEPROM уже зафиксирован на версии 2024-09-10"
+        return 0
+    fi
+
+    log_warn "EEPROM будет зафиксирован на pieeprom-2024-09-10.bin"
+
+    rm -rf "$RPI_EEPROM_REPO_DIR"
+    git clone --depth=1 "$RPI_EEPROM_URL" "$RPI_EEPROM_REPO_DIR"
+
+    log_info "Поиск образа pieeprom-2024-09-10*.bin"
+    find "$RPI_EEPROM_REPO_DIR" -name 'pieeprom-2024-09-10*.bin'
+
+    if [ ! -f "$RPI_EEPROM_FREEZE_SOURCE" ]; then
+        log_error "Не найден образ EEPROM: $RPI_EEPROM_FREEZE_SOURCE"
+        exit 1
+    fi
+
+    rpi-eeprom-config "$RPI_EEPROM_FREEZE_SOURCE" > "$RPI_EEPROM_FREEZE_CONFIG"
+
+    if grep -q "^FREEZE_VERSION=" "$RPI_EEPROM_FREEZE_CONFIG"; then
+        sed -i 's/^FREEZE_VERSION=.*/FREEZE_VERSION=1/' "$RPI_EEPROM_FREEZE_CONFIG"
+    else
+        echo "FREEZE_VERSION=1" >> "$RPI_EEPROM_FREEZE_CONFIG"
+    fi
+
+    rpi-eeprom-config \
+        --out "$RPI_EEPROM_FREEZE_IMAGE" \
+        --config "$RPI_EEPROM_FREEZE_CONFIG" \
+        "$RPI_EEPROM_FREEZE_SOURCE"
+
+    sudo rpi-eeprom-update -d -f "$RPI_EEPROM_FREEZE_IMAGE"
+    log_warn "EEPROM зафиксирован на версии 2024-09-10. Наслаждайтесь стабильностью :)"
     NEEDS_REBOOT=true
 }
 
@@ -325,9 +369,9 @@ main() {
     install_web_term_services
     configure_config_txt
 
-    # FIXME: Обновление бутлоадера убивает некоторые пишки - надо исправить
-    sudo systemctl disable rpi-eeprom-update.service
     # configure_eeprom
+    freeze_eeprom_version
+    sudo systemctl disable rpi-eeprom-update.service
 
     clone_repository
     run_docker_compose
