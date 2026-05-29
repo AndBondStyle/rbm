@@ -3,7 +3,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from serial import Serial
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Float32
 from sensor_msgs.msg import Imu
 from threading import Thread
 from hwnode.crc8 import crc8
@@ -96,6 +96,7 @@ class HardwareNode(Node):
         self.current_w = 0.0
         self.v_left = 0.0
         self.v_right = 0.0
+        self.battery_v = None
 
         self.last_feedback: Feedback = None
         self.last_cmd_time = self.get_clock().now()
@@ -107,6 +108,7 @@ class HardwareNode(Node):
         self.imu_pub = self.create_publisher(Imu, "/hardware/imu", 1)
         self.status_pub = self.create_publisher(Float32MultiArray, "/hardware/status", 1)
         self.odom_pub = self.create_publisher(Odometry, "/hardware/odom", 1)
+        self.battery_pub = self.create_publisher(Float32, "/hardware/battery", 1)
 
         self.read_thread = Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
@@ -135,6 +137,14 @@ class HardwareNode(Node):
                 feedback.right_angle,
             ]
             self.status_pub.publish(status)
+
+            batt = Float32()
+            if self.battery_v is None:
+                self.battery_v = feedback.voltage
+            else:
+                self.battery_v = 0.999 * self.battery_v + 0.001 * feedback.voltage
+            batt.data = self.battery_v
+            self.battery_pub.publish(batt)
 
             imu = Imu()
             imu.header.frame_id = "base_link"
