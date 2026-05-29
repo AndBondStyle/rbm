@@ -134,52 +134,30 @@ configure_config_txt() {
 }
 
 configure_eeprom() {
-    log_info "Проверка настройки PSU_MAX_CURRENT"
+    log_info "Проверка конфигурации EEPROM"
     CURRENT_CONFIG=$(sudo rpi-eeprom-config)
-    
-    if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT=5000"; then
-        log_info "PSU_MAX_CURRENT уже настроен на 5000 мА"
-        return 0
-    fi
-    
-    log_info "Настройка PSU_MAX_CURRENT=5000"    
-    TMP_CONFIG=$(mktemp)
-    echo "$CURRENT_CONFIG" > "$TMP_CONFIG"
 
-    if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT="; then
-        sed -i 's/PSU_MAX_CURRENT=.*/PSU_MAX_CURRENT=5000/' "$TMP_CONFIG"
-    else
-        echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONFIG"
-    fi
-
-    sudo rpi-eeprom-config --apply "$TMP_CONFIG"
-    rm "$TMP_CONFIG"
-    log_warn "Конфигурация EEPROM обновлена"
-    NEEDS_REBOOT=true
-}
-
-freeze_eeprom_version() {
-    log_info "Проверка фиксации версии EEPROM"
-
-    if sudo rpi-eeprom-config | grep -q "^FREEZE_VERSION=1" && vcgencmd bootloader_version 2>/dev/null | grep -q "^2024/09/10"; then
-        log_info "EEPROM уже зафиксирован на версии 2024-09-10"
+    if echo "$CURRENT_CONFIG" | grep -q "^FREEZE_VERSION=1" && \
+       echo "$CURRENT_CONFIG" | grep -q "^PSU_MAX_CURRENT=" && \
+       vcgencmd bootloader_version 2>/dev/null | grep -q "^2024/09/10"; then
+        log_info "EEPROM уже зафиксирован на версии 2024-09-10 и настроен"
         return 0
     fi
 
-    log_warn "EEPROM будет зафиксирован на pieeprom-2024-09-10.bin"
+    log_warn "EEPROM будет настроен на pieeprom-2024-09-10.bin"
 
     log_info "Загрузка pieeprom-2024-09-10.bin"
     curl -fsSL "$RPI_EEPROM_FREEZE_URL" -o "$RPI_EEPROM_FREEZE_SOURCE"
 
-    if [ ! -f "$RPI_EEPROM_FREEZE_SOURCE" ]; then
-        log_error "Не найден образ EEPROM: $RPI_EEPROM_FREEZE_SOURCE"
-        exit 1
-    fi
 
     rpi-eeprom-config "$RPI_EEPROM_FREEZE_SOURCE" > "$RPI_EEPROM_FREEZE_CONFIG"
 
     if ! grep -q "^FREEZE_VERSION=" "$RPI_EEPROM_FREEZE_CONFIG"; then
         echo "FREEZE_VERSION=1" >> "$RPI_EEPROM_FREEZE_CONFIG"
+    fi
+
+    if ! grep -q "^PSU_MAX_CURRENT=" "$RPI_EEPROM_FREEZE_CONFIG"; then
+        echo "PSU_MAX_CURRENT=5000" >> "$RPI_EEPROM_FREEZE_CONFIG"
     fi
 
     rpi-eeprom-config \
@@ -188,7 +166,7 @@ freeze_eeprom_version() {
         "$RPI_EEPROM_FREEZE_SOURCE"
 
     sudo rpi-eeprom-update -d -f "$RPI_EEPROM_FREEZE_IMAGE"
-    log_warn "EEPROM зафиксирован на версии 2024-09-10. Наслаждайтесь стабильностью :)"
+    log_warn "Конфигурация EEPROM обновлена"
     NEEDS_REBOOT=true
 }
 
@@ -363,8 +341,7 @@ main() {
     install_web_term_services
     configure_config_txt
 
-    # configure_eeprom
-    freeze_eeprom_version
+    configure_eeprom
     sudo systemctl disable rpi-eeprom-update.service
 
     clone_repository
