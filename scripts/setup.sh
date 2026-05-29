@@ -12,6 +12,9 @@ RPI_EEPROM_FREEZE_URL="https://github.com/raspberrypi/rpi-eeprom/raw/refs/heads/
 RPI_EEPROM_FREEZE_SOURCE="/tmp/pieeprom-2024-09-10.bin"
 RPI_EEPROM_FREEZE_CONFIG="/tmp/boot.conf"
 RPI_EEPROM_FREEZE_IMAGE="/tmp/pieeprom-freeze.bin"
+SUDOERS_FILE="/etc/sudoers.d/010_$USER-nopasswd"
+SUDOERS_CONTENT="$USER ALL=(ALL) NOPASSWD:ALL"
+
 
 NEEDS_REBOOT=false
 
@@ -168,6 +171,23 @@ configure_eeprom() {
     sudo rpi-eeprom-update -d -f "$RPI_EEPROM_FREEZE_IMAGE"
     log_warn "Конфигурация EEPROM обновлена"
     NEEDS_REBOOT=true
+}
+
+enable_passwordless_sudo() {
+    log_info "Настройка passwordless sudo для $USER"
+
+    if [ -f "$SUDOERS_FILE" ]; then
+        if sudo cat "$SUDOERS_FILE" 2>/dev/null | grep -q "^$SUDOERS_CONTENT$"; then
+            log_info "Passwordless sudo уже настроен для $USER"
+            return 0
+        fi
+    else
+        log_info "Создание файла sudoers для passwordless sudo для $USER"
+        echo "$SUDOERS_CONTENT" | sudo tee "$SUDOERS_FILE" > /dev/null
+        log_info "Passwordless sudo настроен для $USER"
+    fi
+
+    sudo chmod 440 "$SUDOERS_FILE"
 }
 
 clone_repository() {
@@ -334,6 +354,7 @@ WantedBy=multi-user.target"
 main() {
     log_info "=== НАЧАЛО НАСТРОЙКИ RASPBERRY ==="
 
+    enable_passwordless_sudo
     install_docker
     install_platformio_udev
     install_platformio_tools

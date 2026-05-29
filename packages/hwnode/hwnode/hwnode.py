@@ -10,6 +10,7 @@ from hwnode.crc8 import crc8
 from dataclasses import dataclass
 import math
 import struct
+import anycrc
 
 WHEEL_RADIUS = 0.021  # m
 WHEEL_BASE = 0.128  # m
@@ -32,6 +33,12 @@ INPLACE_LINEAR_THRESHOLD = 0.05
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
 
+WHEELS_VELOCITY = 0.53
+CRC16 = anycrc.Model("CRC16-XMODEM")
+
+FEEDBACK_FORMAT = "<hhhhhhhhhffffBBHx"
+FEEDBACK_SIZE = struct.calcsize(FEEDBACK_FORMAT)
+
 
 @dataclass
 class Feedback:
@@ -48,14 +55,14 @@ class Feedback:
     right_angle: float
     left_speed: float
     right_speed: float
-    left_lidar: int
-    right_lidar: int
+    voltage: float
+    current: float
 
     @classmethod
     def unpack(cls, buff: bytes):
-        format = "<hhhhhhhhhffffHHx"
-        if len(buff) != struct.calcsize(format): return
-        values = struct.unpack(format, buff)
+        if len(buff) != FEEDBACK_SIZE: return
+        values = struct.unpack(FEEDBACK_FORMAT, buff)
+        print("crc:", values[15], "ok:", CRC16.calc(buff[:36]) == values[15])
         return Feedback(
             accel_x=values[0],
             accel_y=values[1],
@@ -70,8 +77,8 @@ class Feedback:
             right_angle=values[10],
             left_speed=values[11],
             right_speed=values[12],
-            left_lidar=values[13],
-            right_lidar=values[14],
+            voltage=values[13] / 10,
+            current=values[14] / 10,
         )
 
 
@@ -109,7 +116,7 @@ class HardwareNode(Node):
 
         while rclpy.ok():
             chunk = self.ser.read_until(b"\x7E")
-            if len(buff) + len(chunk) > 39: buff = b""
+            if len(buff) + len(chunk) > FEEDBACK_SIZE: buff = b""
             buff += chunk
             # chunk = chunk.rstrip(b"\x7E")
             feedback = Feedback.unpack(buff)
@@ -199,7 +206,7 @@ class HardwareNode(Node):
 
         v_left = (self.current_v - self.current_w * self.L / 2) / self.R
         v_right = (self.current_v + self.current_w * self.L / 2) / self.R
-        peak = max(abs(self.v_left), abs(self.v_right), 1e-9)
+        peak = max(abs(v_left), abs(v_right), 1e-9)
         scale = min(1.0, MAX_WHEEL_SPEED / peak)
         self.v_left = v_left * scale
         self.v_right = v_right * scale
