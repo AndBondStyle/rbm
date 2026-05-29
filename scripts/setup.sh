@@ -8,9 +8,8 @@ VENV_DIR="$SETUP_DIR/venv"
 TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
 TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
 REQUIREMENTS="pyserial nicegui"
-RPI_EEPROM_REPO_DIR="/tmp/rpi-eeprom"
-RPI_EEPROM_URL="https://github.com/raspberrypi/rpi-eeprom.git"
-RPI_EEPROM_FREEZE_SOURCE="$RPI_EEPROM_REPO_DIR/firmware-2712/old/default/pieeprom-2024-09-10.bin"
+RPI_EEPROM_FREEZE_URL="https://github.com/raspberrypi/rpi-eeprom/raw/refs/heads/master/firmware-2712/old/default/pieeprom-2024-09-10.bin"
+RPI_EEPROM_FREEZE_SOURCE="/tmp/pieeprom-2024-09-10.bin"
 RPI_EEPROM_FREEZE_CONFIG="/tmp/boot.conf"
 RPI_EEPROM_FREEZE_IMAGE="/tmp/pieeprom-freeze.bin"
 
@@ -169,11 +168,8 @@ freeze_eeprom_version() {
 
     log_warn "EEPROM будет зафиксирован на pieeprom-2024-09-10.bin"
 
-    rm -rf "$RPI_EEPROM_REPO_DIR"
-    git clone --depth=1 "$RPI_EEPROM_URL" "$RPI_EEPROM_REPO_DIR"
-
-    log_info "Поиск образа pieeprom-2024-09-10*.bin"
-    find "$RPI_EEPROM_REPO_DIR" -name 'pieeprom-2024-09-10*.bin'
+    log_info "Загрузка pieeprom-2024-09-10.bin"
+    curl -fsSL "$RPI_EEPROM_FREEZE_URL" -o "$RPI_EEPROM_FREEZE_SOURCE"
 
     if [ ! -f "$RPI_EEPROM_FREEZE_SOURCE" ]; then
         log_error "Не найден образ EEPROM: $RPI_EEPROM_FREEZE_SOURCE"
@@ -182,9 +178,7 @@ freeze_eeprom_version() {
 
     rpi-eeprom-config "$RPI_EEPROM_FREEZE_SOURCE" > "$RPI_EEPROM_FREEZE_CONFIG"
 
-    if grep -q "^FREEZE_VERSION=" "$RPI_EEPROM_FREEZE_CONFIG"; then
-        sed -i 's/^FREEZE_VERSION=.*/FREEZE_VERSION=1/' "$RPI_EEPROM_FREEZE_CONFIG"
-    else
+    if ! grep -q "^FREEZE_VERSION=" "$RPI_EEPROM_FREEZE_CONFIG"; then
         echo "FREEZE_VERSION=1" >> "$RPI_EEPROM_FREEZE_CONFIG"
     fi
 
