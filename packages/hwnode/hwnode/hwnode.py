@@ -10,7 +10,7 @@ from hwnode.crc8 import crc8
 from dataclasses import dataclass
 import math
 import struct
-import anycrc 
+from typing import ClassVar
 
 WHEEL_RADIUS = 0.021  # m
 WHEEL_BASE = 0.128  # m
@@ -33,14 +33,8 @@ INPLACE_LINEAR_THRESHOLD = 0.05
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
 
-CRC16 = anycrc.Model("CRC16-XMODEM")
-
-FEEDBACK_FORMAT = "<hhhhhhhhhffffBBHx"
-FEEDBACK_SIZE = struct.calcsize(FEEDBACK_FORMAT)
-
-
 @dataclass
-class Feedback:
+class Packet:
     accel_x: float
     accel_y: float
     accel_z: float
@@ -57,10 +51,31 @@ class Feedback:
     voltage: float
     current: float
 
+    _sep: ClassVar[int] = 0x7E
+    _fmt: ClassVar[str] = "<hhhhhhhhhffffBBHx"
+    _size:  ClassVar[int] = struct.calcsize(_fmt)
+    _payload_size: ClassVar[int] = 36
+
+    @staticmethod
+    def crc16_xmodem(data: bytes, init: int = 0x0000) -> int:
+        crc = init
+        for byte in data:
+            crc ^= byte << 8
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = (crc << 1) ^ 0x1021
+                else:
+                    crc <<= 1
+                crc &= 0xFFFF
+        return crc
+
     @classmethod
     def unpack(cls, buff: bytes):
-        values = struct.unpack(FEEDBACK_FORMAT, buff)
-        return Feedback(
+        if len(buff) != cls._size: return
+        values = struct.unpack(cls._fmt, buff)
+        if cls.crc16_xmodem(buff[:cls._payload_size]) != values[15]:
+            return
+        return cls(
             accel_x=values[0],
             accel_y=values[1],
             accel_z=values[2],
@@ -78,7 +93,6 @@ class Feedback:
             current=values[14] / 10,
         )
 
-
 class HardwareNode(Node):
     def __init__(self):
         super().__init__("hardware_node")
@@ -95,7 +109,7 @@ class HardwareNode(Node):
         self.v_right = 0.0
         self.battery_v = None
 
-        self.last_feedback: Feedback = None
+        self.last_packet: Packet = None
         self.last_cmd_time = self.get_clock().now()
         self.ser = Serial(port=PORT, baudrate=SPEED, timeout=0.1, exclusive=True)
         self.get_logger().info("Serial подключен")
@@ -115,31 +129,31 @@ class HardwareNode(Node):
 
         while rclpy.ok():
             chunk = self.ser.read_until(b"\x7E")
-            if len(buff) + len(chunk) > FEEDBACK_SIZE: buff = b""
+            if len(buff) + len(chunk) > Packet._size    : buff = b""
             buff += chunk
             # chunk = chunk.rstrip(b"\x7E")
-            feedback = Feedback.unpack(buff)
-            # print(buff, len(buff), feedback)
-            if feedback is None: continue
+            packet = Packet.unpack(buff)
+            if packet is None: continue
+            self.last_packet = packet
 
             now = self.get_clock().now().to_msg()
 
             status = Float32MultiArray()
             status.data = [
                 self.v_left,
-                feedback.left_speed,
-                feedback.left_angle,
+                packet.left_speed,
+                packet.left_angle,
                 self.v_right,
-                feedback.right_speed,
-                feedback.right_angle,
+                packet.right_speed,
+                packet.right_angle,
             ]
             self.status_pub.publish(status)
 
             batt = Float32()
             if self.battery_v is None:
-                self.battery_v = feedback.voltage
+                self.battery_v = packet.voltage
             else:
-                self.battery_v = 0.999 * self.battery_v + 0.001 * feedback.voltage
+                self.battery_v = 0.999 * self.battery_v + 0.001 * packet.voltage
             batt.data = self.battery_v
             self.battery_pub.publish(batt)
 
@@ -148,9 +162,9 @@ class HardwareNode(Node):
             imu.header.stamp = now
             imu.orientation_covariance = [-1.0] + [0.0] * 8
             imu.linear_acceleration_covariance = [-1.0] + [0.0] * 8
-            imu.angular_velocity.x = feedback.gyro_x
-            imu.angular_velocity.y = feedback.gyro_y
-            imu.angular_velocity.z = feedback.gyro_z
+            imu.angular_velocity.x = packet.gyro_x
+            imu.angular_velocity.y = packet.gyro_y
+            imu.angular_velocity.z = packet.gyro_z
             imu.angular_velocity_covariance = [0.0] * 9
             imu.angular_velocity_covariance[0] = 0.001
             imu.angular_velocity_covariance[4] = 0.001
@@ -161,12 +175,12 @@ class HardwareNode(Node):
             odom.child_frame_id = "base_link"
             odom.header.frame_id = "base_link"
             odom.header.stamp = now
-            linear_vel = (feedback.left_speed + feedback.right_speed) * self.R / 2
+            linear_vel = (packet.left_speed + packet.right_speed) * self.R / 2
             odom.twist.twist.linear.x = linear_vel
             odom.twist.covariance = [0.0] * 36
             odom.twist.covariance[0] = 0.001
             odom.twist.covariance[35] = 1000.0
-            if abs(feedback.left_speed) < 0.001 and abs(feedback.right_speed) < 0.001:
+            if abs(packet.left_speed) < 0.001 and abs(packet.right_speed) < 0.001:
                 odom.twist.covariance[0] = 0.000001
                 odom.twist.covariance[35] = 0.000001
             self.odom_pub.publish(odom)

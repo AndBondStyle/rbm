@@ -204,19 +204,32 @@ class MCUTest(BaseTest):
         right_angle: float
         left_speed: float
         right_speed: float
-        left_lidar: int
-        right_lidar: int
+        voltage: float
+        current: float
 
         _sep: ClassVar[int] = 0x7E
         _fmt: ClassVar[str] = "<hhhhhhhhhffffBBHx"
         _size:  ClassVar[int] = struct.calcsize(_fmt)
         _payload_size: ClassVar[int] = 36
 
+        @staticmethod
+        def crc16_xmodem(data: bytes, init: int = 0x0000) -> int:
+            crc = init
+            for byte in data:
+                crc ^= byte << 8
+                for _ in range(8):
+                    if crc & 0x8000:
+                        crc = (crc << 1) ^ 0x1021
+                    else:
+                        crc <<= 1
+                    crc &= 0xFFFF
+            return crc
+
         @classmethod
         def unpack(cls, buff: bytes):
             if len(buff) != cls._size: return
             values = struct.unpack(cls._fmt, buff)
-            if MCUTest.crc16_xmodem(buff[:cls._payload_size]) != values[15]:
+            if cls.crc16_xmodem(buff[:cls._payload_size]) != values[15]:
                 return
             return cls(
                 accel_x=values[0],
@@ -232,22 +245,9 @@ class MCUTest(BaseTest):
                 right_angle=values[10],
                 left_speed=values[11],
                 right_speed=values[12],
-                left_lidar=values[13],
-                right_lidar=values[14],
+                voltage=values[13] / 10,
+                current=values[14] / 10,
             )
-
-    @staticmethod
-    def crc16_xmodem(data: bytes, init: int = 0x0000) -> int:
-        crc = init
-        for byte in data:
-            crc ^= byte << 8
-            for _ in range(8):
-                if crc & 0x8000:
-                    crc = (crc << 1) ^ 0x1021
-                else:
-                    crc <<= 1
-                crc &= 0xFFFF
-        return crc
 
     def crc8(self, data: bytes, poly: int = 0x31, init: int = 0xFF) -> int:
         crc = init
@@ -291,7 +291,7 @@ class MCUTest(BaseTest):
                 "mag: [{0.mag_x:.2f}, {0.mag_y:.2f}, {0.mag_z:.2f}]\r\n"
                 "speed: [{0.left_speed:.2f}, {0.right_speed:.2f}] | "
                 "angle: [{0.left_angle:.2f}, {0.right_angle:.2f}] | "
-                "lidar: [{0.left_lidar}, {0.right_lidar}]"
+                "battery: [{0.voltage}, {0.current}]"
             )
 
         data = b""
@@ -353,17 +353,14 @@ class MCUTest(BaseTest):
 
         good_packet_count = 0
         for pack in packets:
-            lidar_ok = pack.left_lidar > 0 or pack.right_lidar > 0
+            battery_ok = pack.voltage > 0
             imu_ok = True if not imu_present else self.imu_nonzero(pack)
-            good_packet_count += lidar_ok and imu_ok
+            good_packet_count += battery_ok and imu_ok
 
-        label = "imu/lidar" if imu_present else "lidar"
+        label = "IMU" 
         msg = f"Good {label} packets: {good_packet_count} out of {len(packets)} total"
         self.log(msg, color="yellow")
-        if imu_present:
-            assert good_packet_count > len(packets) / 2, "Broken imu/lidar feedback"
-        else:
-            assert good_packet_count > len(packets) / 2, "Broken lidar feedback"
+        assert good_packet_count > len(packets) / 2, "Broken feedback"
 
         return True
 
