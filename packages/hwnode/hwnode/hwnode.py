@@ -95,7 +95,7 @@ class Packet:
 
 class HardwareNode(Node):
     def __init__(self):
-        super().__init__("hardware_node")
+        super().__init__("hwnode")
 
         self.L = WHEEL_BASE
         self.R = WHEEL_RADIUS
@@ -129,7 +129,7 @@ class HardwareNode(Node):
 
         while rclpy.ok():
             chunk = self.ser.read_until(b"\x7E")
-            if len(buff) + len(chunk) > Packet._size    : buff = b""
+            if len(buff) + len(chunk) > Packet._size: buff = b""
             buff += chunk
             # chunk = chunk.rstrip(b"\x7E")
             packet = Packet.unpack(buff)

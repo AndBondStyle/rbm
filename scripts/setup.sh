@@ -171,6 +171,8 @@ configure_eeprom() {
     sudo rpi-eeprom-update -d -f "$RPI_EEPROM_FREEZE_IMAGE"
     log_warn "Конфигурация EEPROM обновлена"
     NEEDS_REBOOT=true
+
+    sudo systemctl disable rpi-eeprom-update.service
 }
 
 enable_passwordless_sudo() {
@@ -363,7 +365,6 @@ main() {
     configure_config_txt
 
     configure_eeprom
-    sudo systemctl disable rpi-eeprom-update.service
 
     clone_repository
     run_docker_compose

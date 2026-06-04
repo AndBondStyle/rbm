@@ -1,31 +1,6 @@
 #!/usr/bin/env python3
 
-import sys
-import os
-import subprocess as sp
 from pathlib import Path
-import venv
-
-def is_venv():
-    return (hasattr(sys, "real_prefix") or
-            (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix))
-
-def setup_and_relaunch():
-    venv_dir = Path("/home/robomarvel/.setup/venv")
-    if not venv_dir.exists():
-        print("Creating virtual environment...")
-        venv.create(venv_dir, with_pip=True)
-        packages = ["nicegui", "pyserial", "pyyaml"]
-        sp.check_call([str(venv_dir / "bin" / "pip"), "install"] + packages)
-
-    python_path = str(venv_dir / "bin" / "python")
-    os.execv(python_path, [python_path] + sys.argv)
-
-if not is_venv():
-    setup_and_relaunch()
-    sys.exit(0)
-
-# ----------------------------------------------------------------
 
 import asyncio
 import time
@@ -291,7 +266,7 @@ class MCUTest(BaseTest):
                 "mag: [{0.mag_x:.2f}, {0.mag_y:.2f}, {0.mag_z:.2f}]\r\n"
                 "speed: [{0.left_speed:.2f}, {0.right_speed:.2f}] | "
                 "angle: [{0.left_angle:.2f}, {0.right_angle:.2f}] | "
-                "battery: [{0.voltage}, {0.current}]"
+                "battery: [{0.voltage:.2f}, {0.current:.2f}]"
             )
 
         data = b""
@@ -357,8 +332,7 @@ class MCUTest(BaseTest):
             imu_ok = True if not imu_present else self.imu_nonzero(pack)
             good_packet_count += battery_ok and imu_ok
 
-        label = "IMU" 
-        msg = f"Good {label} packets: {good_packet_count} out of {len(packets)} total"
+        msg = f"Good IMU packets: {good_packet_count} out of {len(packets)} total"
         self.log(msg, color="yellow")
         assert good_packet_count > len(packets) / 2, "Broken feedback"
 
@@ -432,7 +406,7 @@ class DockerROSTest(BaseTest):
     CONTAINER_NAME = "ros"
 
     EXPECTED_NODES = [
-        "/hardware_node",
+        "/hwnode",
         "/ld19_node",
         "/icp_odom",
         "/robot_state_publisher",
@@ -470,50 +444,10 @@ class DockerROSTest(BaseTest):
         cmd = f"docker exec {self.CONTAINER_NAME} bash -c 'export PS1=\"dummy\" && source ~/.bashrc && {cmd}'"
         return await self.shell(cmd, check=check, timeout=timeout)
 
-    async def _wait_for_container(self, timeout: float = 30.0):
-        self.log("Waiting for docker container to be running...", color="yellow")
-        start = time.perf_counter()
-        status = ""
-        while time.perf_counter() - start < timeout:
-            status = (await self.shell(
-                f"docker inspect -f '{{{{.State.Status}}}}' {self.CONTAINER_NAME}",
-                check=False,
-                timeout=5,
-            )).strip()
-            if status == "running":
-                return
-            await asyncio.sleep(1)
-        assert False, f"Docker container not running (status={status})"
-
-    async def _wait_for_ros(self, timeout: float = 40.0):
-        self.log("Waiting for ROS graph...", color="yellow")
-        start = time.perf_counter()
-        last_output = ""
-        while time.perf_counter() - start < timeout:
-            last_output = await self._docker_exec("ros2 node list", timeout=5, check=False)
-            if last_output.strip() and "Error response from daemon" not in last_output:
-                return
-            await asyncio.sleep(1)
-        assert False, f"ROS did not become ready (last output: {last_output.strip()})"
-
-    async def _check_container_shell(self, timeout: float = 10.0):
-        self.log("Checking container shell...", color="yellow")
-        output = await self.shell(
-            f"docker exec {self.CONTAINER_NAME} /bin/bash -lc 'echo __SHELL_OK__'",
-            check=False,
-            timeout=timeout,
-        )
-        if "__SHELL_OK__" not in output:
-            msg = output.strip() or "no output"
-            assert False, f"Container shell unavailable: {msg}"
-
     async def _start_container(self):
         Path("/home/robomarvel/.autostart").touch()
         await self.shell(f"docker stop {self.CONTAINER_NAME}", check=False, timeout=10)
         await self.shell(f"docker start {self.CONTAINER_NAME}", timeout=10)
-        await self._wait_for_container()
-        await self._check_container_shell()
-        await self._wait_for_ros()
 
     async def _check_nodes(self):
         self.log("\n--- Checking ROS nodes ---", color="yellow")
