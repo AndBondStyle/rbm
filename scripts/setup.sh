@@ -138,6 +138,9 @@ configure_config_txt() {
 
 configure_eeprom() {
     log_info "Проверка конфигурации EEPROM"
+
+    sudo systemctl disable rpi-eeprom-update.service
+
     CURRENT_CONFIG=$(sudo rpi-eeprom-config)
 
     if echo "$CURRENT_CONFIG" | grep -q "^FREEZE_VERSION=1" && \
@@ -171,8 +174,6 @@ configure_eeprom() {
     sudo rpi-eeprom-update -d -f "$RPI_EEPROM_FREEZE_IMAGE"
     log_warn "Конфигурация EEPROM обновлена"
     NEEDS_REBOOT=true
-
-    sudo systemctl disable rpi-eeprom-update.service
 }
 
 enable_passwordless_sudo() {

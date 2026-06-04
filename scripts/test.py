@@ -448,6 +448,8 @@ class DockerROSTest(BaseTest):
         Path("/home/robomarvel/.autostart").touch()
         await self.shell(f"docker stop {self.CONTAINER_NAME}", check=False, timeout=10)
         await self.shell(f"docker start {self.CONTAINER_NAME}", timeout=10)
+        self.log("Waiting for ROS to initialize...", color="yellow")
+        await asyncio.sleep(5)
 
     async def _check_nodes(self):
         self.log("\n--- Checking ROS nodes ---", color="yellow")
