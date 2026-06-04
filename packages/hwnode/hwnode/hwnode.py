@@ -3,13 +3,14 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from serial import Serial
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Float32
 from sensor_msgs.msg import Imu
 from threading import Thread
 from hwnode.crc8 import crc8
 from dataclasses import dataclass
 import math
 import struct
+import anycrc 
 
 WHEEL_RADIUS = 0.021  # m
 WHEEL_BASE = 0.128  # m
@@ -32,6 +33,11 @@ INPLACE_LINEAR_THRESHOLD = 0.05
 PORT = "/dev/ttyAMA0"
 SPEED = 115200
 
+CRC16 = anycrc.Model("CRC16-XMODEM")
+
+FEEDBACK_FORMAT = "<hhhhhhhhhffffBBHx"
+FEEDBACK_SIZE = struct.calcsize(FEEDBACK_FORMAT)
+
 
 @dataclass
 class Feedback:
@@ -48,14 +54,12 @@ class Feedback:
     right_angle: float
     left_speed: float
     right_speed: float
-    left_lidar: int
-    right_lidar: int
+    voltage: float
+    current: float
 
     @classmethod
     def unpack(cls, buff: bytes):
-        format = "<hhhhhhhhhffffHHx"
-        if len(buff) != struct.calcsize(format): return
-        values = struct.unpack(format, buff)
+        values = struct.unpack(FEEDBACK_FORMAT, buff)
         return Feedback(
             accel_x=values[0],
             accel_y=values[1],
@@ -70,8 +74,8 @@ class Feedback:
             right_angle=values[10],
             left_speed=values[11],
             right_speed=values[12],
-            left_lidar=values[13],
-            right_lidar=values[14],
+            voltage=values[13] / 10,
+            current=values[14] / 10,
         )
 
 
@@ -89,6 +93,7 @@ class HardwareNode(Node):
         self.current_w = 0.0
         self.v_left = 0.0
         self.v_right = 0.0
+        self.battery_v = None
 
         self.last_feedback: Feedback = None
         self.last_cmd_time = self.get_clock().now()
@@ -100,6 +105,7 @@ class HardwareNode(Node):
         self.imu_pub = self.create_publisher(Imu, "/hardware/imu", 1)
         self.status_pub = self.create_publisher(Float32MultiArray, "/hardware/status", 1)
         self.odom_pub = self.create_publisher(Odometry, "/hardware/odom", 1)
+        self.battery_pub = self.create_publisher(Float32, "/hardware/battery", 1)
 
         self.read_thread = Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
@@ -109,7 +115,7 @@ class HardwareNode(Node):
 
         while rclpy.ok():
             chunk = self.ser.read_until(b"\x7E")
-            if len(buff) + len(chunk) > 39: buff = b""
+            if len(buff) + len(chunk) > FEEDBACK_SIZE: buff = b""
             buff += chunk
             # chunk = chunk.rstrip(b"\x7E")
             feedback = Feedback.unpack(buff)
@@ -128,6 +134,14 @@ class HardwareNode(Node):
                 feedback.right_angle,
             ]
             self.status_pub.publish(status)
+
+            batt = Float32()
+            if self.battery_v is None:
+                self.battery_v = feedback.voltage
+            else:
+                self.battery_v = 0.999 * self.battery_v + 0.001 * feedback.voltage
+            batt.data = self.battery_v
+            self.battery_pub.publish(batt)
 
             imu = Imu()
             imu.header.frame_id = "base_link"
@@ -199,7 +213,7 @@ class HardwareNode(Node):
 
         v_left = (self.current_v - self.current_w * self.L / 2) / self.R
         v_right = (self.current_v + self.current_w * self.L / 2) / self.R
-        peak = max(abs(self.v_left), abs(self.v_right), 1e-9)
+        peak = max(abs(v_left), abs(v_right), 1e-9)
         scale = min(1.0, MAX_WHEEL_SPEED / peak)
         self.v_left = v_left * scale
         self.v_right = v_right * scale

@@ -8,6 +8,13 @@ VENV_DIR="$SETUP_DIR/venv"
 TEST_SCRIPT_URL="https://raw.githubusercontent.com/AndBondStyle/rbm/refs/heads/master/scripts/test.py"
 TEST_SCRIPT_PATH="$SETUP_DIR/test.py"
 REQUIREMENTS="pyserial nicegui"
+RPI_EEPROM_FREEZE_URL="https://github.com/raspberrypi/rpi-eeprom/raw/refs/heads/master/firmware-2712/old/default/pieeprom-2024-09-10.bin"
+RPI_EEPROM_FREEZE_SOURCE="/tmp/pieeprom-2024-09-10.bin"
+RPI_EEPROM_FREEZE_CONFIG="/tmp/boot.conf"
+RPI_EEPROM_FREEZE_IMAGE="/tmp/pieeprom-freeze.bin"
+SUDOERS_FILE="/etc/sudoers.d/010_$USER-nopasswd"
+SUDOERS_CONTENT="$USER ALL=(ALL) NOPASSWD:ALL"
+
 
 NEEDS_REBOOT=false
 
@@ -130,28 +137,57 @@ configure_config_txt() {
 }
 
 configure_eeprom() {
-    log_info "Проверка настройки PSU_MAX_CURRENT"
+    log_info "Проверка конфигурации EEPROM"
     CURRENT_CONFIG=$(sudo rpi-eeprom-config)
-    
-    if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT=5000"; then
-        log_info "PSU_MAX_CURRENT уже настроен на 5000 мА"
+
+    if echo "$CURRENT_CONFIG" | grep -q "^FREEZE_VERSION=1" && \
+       echo "$CURRENT_CONFIG" | grep -q "^PSU_MAX_CURRENT=" && \
+       vcgencmd bootloader_version 2>/dev/null | grep -q "^2024/09/10"; then
+        log_info "EEPROM уже зафиксирован на версии 2024-09-10 и настроен"
         return 0
     fi
-    
-    log_info "Настройка PSU_MAX_CURRENT=5000"    
-    TMP_CONFIG=$(mktemp)
-    echo "$CURRENT_CONFIG" > "$TMP_CONFIG"
 
-    if echo "$CURRENT_CONFIG" | grep -q "PSU_MAX_CURRENT="; then
-        sed -i 's/PSU_MAX_CURRENT=.*/PSU_MAX_CURRENT=5000/' "$TMP_CONFIG"
-    else
-        echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONFIG"
+    log_warn "EEPROM будет настроен на pieeprom-2024-09-10.bin"
+
+    log_info "Загрузка pieeprom-2024-09-10.bin"
+    curl -fsSL "$RPI_EEPROM_FREEZE_URL" -o "$RPI_EEPROM_FREEZE_SOURCE"
+
+
+    rpi-eeprom-config "$RPI_EEPROM_FREEZE_SOURCE" > "$RPI_EEPROM_FREEZE_CONFIG"
+
+    if ! grep -q "^FREEZE_VERSION=" "$RPI_EEPROM_FREEZE_CONFIG"; then
+        echo "FREEZE_VERSION=1" >> "$RPI_EEPROM_FREEZE_CONFIG"
     fi
 
-    sudo rpi-eeprom-config --apply "$TMP_CONFIG"
-    rm "$TMP_CONFIG"
+    if ! grep -q "^PSU_MAX_CURRENT=" "$RPI_EEPROM_FREEZE_CONFIG"; then
+        echo "PSU_MAX_CURRENT=5000" >> "$RPI_EEPROM_FREEZE_CONFIG"
+    fi
+
+    rpi-eeprom-config \
+        --out "$RPI_EEPROM_FREEZE_IMAGE" \
+        --config "$RPI_EEPROM_FREEZE_CONFIG" \
+        "$RPI_EEPROM_FREEZE_SOURCE"
+
+    sudo rpi-eeprom-update -d -f "$RPI_EEPROM_FREEZE_IMAGE"
     log_warn "Конфигурация EEPROM обновлена"
     NEEDS_REBOOT=true
+}
+
+enable_passwordless_sudo() {
+    log_info "Настройка passwordless sudo для $USER"
+
+    if [ -f "$SUDOERS_FILE" ]; then
+        if sudo cat "$SUDOERS_FILE" 2>/dev/null | grep -q "^$SUDOERS_CONTENT$"; then
+            log_info "Passwordless sudo уже настроен для $USER"
+            return 0
+        fi
+    else
+        log_info "Создание файла sudoers для passwordless sudo для $USER"
+        echo "$SUDOERS_CONTENT" | sudo tee "$SUDOERS_FILE" > /dev/null
+        log_info "Passwordless sudo настроен для $USER"
+    fi
+
+    sudo chmod 440 "$SUDOERS_FILE"
 }
 
 clone_repository() {
@@ -318,6 +354,7 @@ WantedBy=multi-user.target"
 main() {
     log_info "=== НАЧАЛО НАСТРОЙКИ RASPBERRY ==="
 
+    enable_passwordless_sudo
     install_docker
     install_platformio_udev
     install_platformio_tools
@@ -325,9 +362,8 @@ main() {
     install_web_term_services
     configure_config_txt
 
-    # FIXME: Обновление бутлоадера убивает некоторые пишки - надо исправить
+    configure_eeprom
     sudo systemctl disable rpi-eeprom-update.service
-    # configure_eeprom
 
     clone_repository
     run_docker_compose

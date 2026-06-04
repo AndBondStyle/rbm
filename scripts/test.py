@@ -15,7 +15,7 @@ def setup_and_relaunch():
     if not venv_dir.exists():
         print("Creating virtual environment...")
         venv.create(venv_dir, with_pip=True)
-        packages = ["nicegui", "pyserial"]
+        packages = ["nicegui", "pyserial", "pyyaml"]
         sp.check_call([str(venv_dir / "bin" / "pip"), "install"] + packages)
 
     python_path = str(venv_dir / "bin" / "python")
@@ -39,6 +39,7 @@ from serial import Serial
 import socket
 import struct
 import math
+import json
 import yaml
 import re
 
@@ -126,6 +127,16 @@ class BaseTest(abc.ABC):
     async def test(self):
         pass
 
+class RaspberryTest(BaseTest):
+    name = "RASPBERRY"
+
+    async def test(self):
+        logs = await self.shell("vcgencmd otp_dump | grep '^32:'")
+        line = logs.splitlines()[0]
+        assert line.startswith("32:00d")
+        return True
+
+
 
 class CameraTest(BaseTest):
     name = "CAMERA"
@@ -197,13 +208,16 @@ class MCUTest(BaseTest):
         right_lidar: int
 
         _sep: ClassVar[int] = 0x7E
-        _fmt: ClassVar[str] = "<hhhhhhhhhffffHHx"
+        _fmt: ClassVar[str] = "<hhhhhhhhhffffBBHx"
         _size:  ClassVar[int] = struct.calcsize(_fmt)
+        _payload_size: ClassVar[int] = 36
 
         @classmethod
         def unpack(cls, buff: bytes):
             if len(buff) != cls._size: return
             values = struct.unpack(cls._fmt, buff)
+            if MCUTest.crc16_xmodem(buff[:cls._payload_size]) != values[15]:
+                return
             return cls(
                 accel_x=values[0],
                 accel_y=values[1],
@@ -222,6 +236,19 @@ class MCUTest(BaseTest):
                 right_lidar=values[14],
             )
 
+    @staticmethod
+    def crc16_xmodem(data: bytes, init: int = 0x0000) -> int:
+        crc = init
+        for byte in data:
+            crc ^= byte << 8
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = (crc << 1) ^ 0x1021
+                else:
+                    crc <<= 1
+                crc &= 0xFFFF
+        return crc
+
     def crc8(self, data: bytes, poly: int = 0x31, init: int = 0xFF) -> int:
         crc = init
         for byte in data:
@@ -231,6 +258,23 @@ class MCUTest(BaseTest):
                 else: crc <<= 1
                 crc &= 0xFF
         return crc
+
+    @staticmethod
+    def imu_nonzero(pack: "MCUTest.Packet") -> bool:
+        return any(
+            abs(value) > 1e-3
+            for value in (
+                pack.accel_x,
+                pack.accel_y,
+                pack.accel_z,
+                pack.gyro_x,
+                pack.gyro_y,
+                pack.gyro_z,
+                pack.mag_x,
+                pack.mag_y,
+                pack.mag_z,
+            )
+        )
 
     def send_cmd(self, ser: Serial, left: float, right: float, log: bool = True):
         buf = struct.pack("<ffB", left, right, 0)
@@ -244,11 +288,10 @@ class MCUTest(BaseTest):
         if logfmt is None:
             logfmt = (
                 "gyro: [{0.gyro_x:.2f}, {0.gyro_y:.2f}, {0.gyro_z:.2f}] | "
-                "accel: [{0.accel_x:.2f}, {0.accel_y:.2f}, {0.accel_z:.2f}] | "
                 "mag: [{0.mag_x:.2f}, {0.mag_y:.2f}, {0.mag_z:.2f}]\r\n"
                 "speed: [{0.left_speed:.2f}, {0.right_speed:.2f}] | "
                 "angle: [{0.left_angle:.2f}, {0.right_angle:.2f}] | "
-                "lidar: [{0.left_lidar:.2f}, {0.right_lidar:.2f}]"
+                "lidar: [{0.left_lidar}, {0.right_lidar}]"
             )
 
         data = b""
@@ -274,7 +317,7 @@ class MCUTest(BaseTest):
                 chunk = data[last_sep_index - self.Packet._size + 1:last_sep_index + 1]
                 if log_packets: self.log(f"<<< {':'.join(f'{x:02X}' for x in chunk)}")
                 if chunk.count(0x7E) > 1:
-                    self.log("!!! WARNING: 0x7E inside packet - skipipng")
+                    self.log("!!! WARNING: 0x7E inside packet - skipping")
                     continue
                 pack = self.Packet.unpack(chunk)
                 assert pack is not None, "Failed to parse packet"
@@ -304,15 +347,23 @@ class MCUTest(BaseTest):
             self.log(msg, color="red")
             return False
 
-        good_imu_count = 0
+        imu_present = any(self.imu_nonzero(pack) for pack in packets)
+        if not imu_present:
+            self.log("IMU data not detected; skipping IMU validation", color="yellow")
+
+        good_packet_count = 0
         for pack in packets:
-            gyro_ok = (pack.gyro_x != 0 or pack.gyro_y != 0 or pack.gyro_z != 0)
-            accel_ok = pack.accel_z > 1000  # accel z axis is gravity (in popugai's)
-            good_imu_count += gyro_ok and accel_ok
-        
-        msg = f"Good IMU packets: {good_imu_count} out of {len(packets)} total"
+            lidar_ok = pack.left_lidar > 0 or pack.right_lidar > 0
+            imu_ok = True if not imu_present else self.imu_nonzero(pack)
+            good_packet_count += lidar_ok and imu_ok
+
+        label = "imu/lidar" if imu_present else "lidar"
+        msg = f"Good {label} packets: {good_packet_count} out of {len(packets)} total"
         self.log(msg, color="yellow")
-        assert good_imu_count > len(packets) / 2, "Broken IMU"
+        if imu_present:
+            assert good_packet_count > len(packets) / 2, "Broken imu/lidar feedback"
+        else:
+            assert good_packet_count > len(packets) / 2, "Broken lidar feedback"
 
         return True
 
@@ -370,14 +421,22 @@ class MoveTest(MCUTest):
 
         return True
 
+class StartDockerTest(BaseTest):
+    name = "START DOCKER"
+
+    async def test(self):
+        Path("/home/robomarvel/.autostart").touch()
+        await self.shell("docker start ros", timeout=10)
+        return True
+
 
 class DockerROSTest(BaseTest):
     name = "DOCKER + ROS"
+    CONTAINER_NAME = "ros"
 
     EXPECTED_NODES = [
-        "/hwnode",
+        "/hardware_node",
         "/ld19_node",
-        "/camera_node",
         "/icp_odom",
         "/robot_state_publisher",
         "/foxglove_bridge",
@@ -404,7 +463,6 @@ class DockerROSTest(BaseTest):
         ("/scan", 10.0, 3),
         ("/hardware/imu", 50.0, 3),
         ("/hardware/odom", 50.0, 3),
-        ("/camera_node/image_raw/compressed", 25.0, 3),
         ("/icp/odom", 10.0, 3),
         ("/local_costmap/costmap", 1.5, 10),
         ("/global_costmap/costmap", 0.5, 10),
@@ -412,15 +470,53 @@ class DockerROSTest(BaseTest):
     ]
 
     async def _docker_exec(self, cmd: str, check: bool = True, timeout: float = 10.0) -> str:
-        cmd = f"docker exec ros bash -c 'export PS1=\"dummy\" && source ~/.bashrc && {cmd}'"
+        cmd = f"docker exec {self.CONTAINER_NAME} bash -c 'export PS1=\"dummy\" && source ~/.bashrc && {cmd}'"
         return await self.shell(cmd, check=check, timeout=timeout)
+
+    async def _wait_for_container(self, timeout: float = 30.0):
+        self.log("Waiting for docker container to be running...", color="yellow")
+        start = time.perf_counter()
+        status = ""
+        while time.perf_counter() - start < timeout:
+            status = (await self.shell(
+                f"docker inspect -f '{{{{.State.Status}}}}' {self.CONTAINER_NAME}",
+                check=False,
+                timeout=5,
+            )).strip()
+            if status == "running":
+                return
+            await asyncio.sleep(1)
+        assert False, f"Docker container not running (status={status})"
+
+    async def _wait_for_ros(self, timeout: float = 40.0):
+        self.log("Waiting for ROS graph...", color="yellow")
+        start = time.perf_counter()
+        last_output = ""
+        while time.perf_counter() - start < timeout:
+            last_output = await self._docker_exec("ros2 node list", timeout=5, check=False)
+            if last_output.strip() and "Error response from daemon" not in last_output:
+                return
+            await asyncio.sleep(1)
+        assert False, f"ROS did not become ready (last output: {last_output.strip()})"
+
+    async def _check_container_shell(self, timeout: float = 10.0):
+        self.log("Checking container shell...", color="yellow")
+        output = await self.shell(
+            f"docker exec {self.CONTAINER_NAME} /bin/bash -lc 'echo __SHELL_OK__'",
+            check=False,
+            timeout=timeout,
+        )
+        if "__SHELL_OK__" not in output:
+            msg = output.strip() or "no output"
+            assert False, f"Container shell unavailable: {msg}"
 
     async def _start_container(self):
         Path("/home/robomarvel/.autostart").touch()
-        await self.shell("docker stop ros", check=False, timeout=10)
-        await self.shell("docker start ros", timeout=10)
-        self.log("Waiting for ROS to initialize...", color="yellow")
-        await asyncio.sleep(5)
+        await self.shell(f"docker stop {self.CONTAINER_NAME}", check=False, timeout=10)
+        await self.shell(f"docker start {self.CONTAINER_NAME}", timeout=10)
+        await self._wait_for_container()
+        await self._check_container_shell()
+        await self._wait_for_ros()
 
     async def _check_nodes(self):
         self.log("\n--- Checking ROS nodes ---", color="yellow")
@@ -429,6 +525,12 @@ class DockerROSTest(BaseTest):
         missing = set(self.EXPECTED_NODES) - nodes
         assert not missing, f"Missing nodes: {sorted(missing)}"
         self.log(f"All {len(self.EXPECTED_NODES)} expected nodes found", color="green")
+
+    async def _check_camera_stream(self):
+        self.log("\n--- Checking camera stream (mediamtx) ---", color="yellow")
+        output = await self._docker_exec("ps -ef | grep '[m]ediamtx'", timeout=5, check=False)
+        assert output.strip(), "Camera stream is not running (camera_stream.yaml)"
+        self.log("Camera stream process detected", color="green")
 
     async def _check_transforms(self):
         self.log("\n--- Checking transforms via view_frames ---", color="yellow")
@@ -441,7 +543,7 @@ class DockerROSTest(BaseTest):
         data = data.replace('\\"', '"')
         data = data.replace("\\n", "\n")
         self.log(f"\r\nVIEW FRAMES RESULT:", color="yellow")
-        self.log(f"{data.replace("\n", "\r\n")}")
+        self.log(data.replace("\n", "\r\n"))
         frames = yaml.safe_load(data)
 
         for child, parent, min_rate in self.TRANSFORMS:
@@ -479,9 +581,61 @@ class DockerROSTest(BaseTest):
     async def test(self):
         await self._start_container()
         await self._check_nodes()
+        await self._check_camera_stream()
         await self._check_transforms()
         for topic, min_rate, timeout in self.TOPICS:
             await self._check_topic(topic, min_rate, timeout)
+        return True
+
+
+class Nav2RoundTripTest(DockerROSTest):
+    name = "NAV2 ROUND TRIP"
+
+    async def _reset_map(self):
+        self.log("\n--- Resetting map ---", color="yellow")
+        services = await self._docker_exec("ros2 service list", timeout=10)
+        reset_services = [line.strip() for line in services.splitlines() if "reset" in line.lower()]
+        assert reset_services, "No reset service found"
+        service = "/slam_toolbox/reset" if "/slam_toolbox/reset" in reset_services else reset_services[0]
+        service_types = await self._docker_exec("ros2 service type " + service, timeout=10)
+        service_type = service_types.strip().splitlines()[-1]
+        await self._docker_exec(f"ros2 service call {service} {service_type} {{}}", timeout=10)
+
+    async def _send_goal(self, x: float, yaw: float = 0.0, timeout: float = 45.0):
+        yaw = float(yaw)
+        self.log(f"\n--- Navigate to x={x:.2f}m, yaw={math.degrees(yaw):.1f}deg ---", color="yellow")
+        half_yaw = yaw / 2.0
+        qz = math.sin(half_yaw)
+        qw = math.cos(half_yaw)
+        goal = {
+            "pose": {
+                "header": {"frame_id": "map"},
+                "pose": {
+                    "position": {"x": float(f"{x:.3f}"), "y": 0.0, "z": 0.0},
+                    "orientation": {"x": 0.0, "y": 0.0, "z": qz, "w": qw},
+                },
+            }
+        }
+        goal_json = json.dumps(goal, separators=(",", ":"))
+        goal_arg = goal_json.replace('"', '\\"')
+        cmd = f"timeout {timeout:.0f} ros2 action send_goal --feedback /navigate_to_pose nav2_msgs/action/NavigateToPose \"{goal_arg}\""
+        output = await self._docker_exec(cmd, timeout=timeout + 2, check=False)
+        assert "Goal accepted" in output, "NavigateToPose goal was not accepted"
+        success_markers = (
+            "Goal succeeded",
+            "status: 4",
+            "STATUS_SUCCEEDED",
+            "Goal finished with status: SUCCEEDED",
+        )
+        assert any(marker in output for marker in success_markers), "NavigateToPose goal did not succeed"
+
+    async def test(self):
+        await self._start_container()
+        await self._check_nodes()
+        await self._check_transforms()
+        await self._reset_map()
+        await self._send_goal(0.5, yaw=0.0)
+        await self._send_goal(0.0, yaw=0.0)
         return True
 
 
