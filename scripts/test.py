@@ -462,7 +462,7 @@ class DockerROSTest(BaseTest):
     async def _check_camera_stream(self):
         self.log("\n--- Checking camera stream (mediamtx) ---", color="yellow")
         output = await self._docker_exec("ps -ef | grep '[m]ediamtx'", timeout=5, check=False)
-        assert output.strip(), "Camera stream is not running (camera_stream.yaml)"
+        assert output.strip(), "Camera stream is not running (camera_stream.yaml)" 
         self.log("Camera stream process detected", color="green")
 
     async def _check_transforms(self):
