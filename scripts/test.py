@@ -432,7 +432,8 @@ class DockerROSTest(BaseTest):
 
     TOPICS = [
         ("/scan", 10.0, 3),
-        ("/hardware/imu", 50.0, 3),
+        # из за этого топика весь тест пишет fail, хотя почти на каждом роботе имушки просто нет, да и для нее есть отдельный тест
+        # ("/hardware/imu", 50.0, 3),
         ("/hardware/odom", 50.0, 3),
         ("/icp/odom", 10.0, 3),
         ("/local_costmap/costmap", 1.5, 10),
@@ -650,7 +651,7 @@ def main_page():
 # ----------------------------------------------------------------
 
 LINKS = [
-    ("Foxglove", "category", "https://foxglove.robotics-lab.ru/?ds=foxglove-websocket&ds.url=ws%3A%2F%2F{ip}%3A8765"),
+    ("Foxglove", "category", "https://foxglove-ssl.robotics-lab.ru/?ds=foxglove-websocket&ds.url=ws%3A%2F%2F{ip}%3A8765"),
     ("Jupyter Lab", "code", "http://{ip}:8080"),
     ("Terminal (host)", "terminal", "http://{ip}:8100"),
     ("Terminal (docker)", "terminal", "http://{ip}:8200"),
