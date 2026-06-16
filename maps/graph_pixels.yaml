@@ -1,0 +1,51 @@
+nodes:
+  1:
+    pixel: [14, 15]
+    type: main
+  2:
+    pixel: [63, 14]
+    type: intermediate
+  3:
+    pixel: [33, 25]
+    type: wait
+  4:
+    pixel: [52, 26]
+    type: wait
+  5:
+    pixel: [20, 35]
+    type: wait
+  6:
+    pixel: [33, 35]
+    type: intermediate
+  7:
+    pixel: [46, 35]
+    type: intermediate
+  8:
+    pixel: [73, 35]
+    type: main
+  9:
+    pixel: [14, 53]
+    type: intermediate
+  10:
+    pixel: [32, 55]
+    type: main
+  11:
+    pixel: [53, 45]
+    type: wait
+  12:
+    pixel: [58, 55]
+    type: intermediate
+  13:
+    pixel: [72, 56]
+    type: main
+
+edges:
+  1: [3]
+  3: [6, 5, 7]
+  5: [9, 6]
+  9: [10]
+  6: [7]
+  7: [4, 11]
+  4: [2, 8]
+  11: [12]
+  12: [13]
