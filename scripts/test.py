@@ -202,10 +202,10 @@ class MCUTest(BaseTest):
 
         @classmethod
         def unpack(cls, buff: bytes):
-            if len(buff) != cls._size: return
+            if len( ) != cls._size: raise RuntimeError("Kek1")
             values = struct.unpack(cls._fmt, buff)
             if cls.crc16_xmodem(buff[:cls._payload_size]) != values[15]:
-                return
+                raise RuntimeError("Kek2")
             return cls(
                 accel_x=values[0],
                 accel_y=values[1],
@@ -276,11 +276,17 @@ class MCUTest(BaseTest):
         while time.perf_counter() - start < timeout:
             if not ser.in_waiting:
                 await asyncio.sleep(0.1)
+                self.log("Log in if not ser.in_waiting")
                 continue
 
+
+
             chunk = ser.read_until(b"\x7E")
+
+            self.log(f"RAW : {':'.join(f'{x:02X}' for x in chunk)}")
             data += chunk
             if len(data) >= self.Packet._size:
+                
                 last_sep_index = -1
                 for i in range(len(data) - 1, -1, -1):
                     if data[i] == 0x7E:
