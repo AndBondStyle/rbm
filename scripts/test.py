@@ -146,7 +146,7 @@ class SpeakerMicTest(BaseTest):
             "arecord -D plughw:0 -c2 -r 48000 -f S32_LE -t wav "
             f"-V stereo -d 5 -v {output_file}"
         )
-        speaker_proc = self.shell("speaker-test -t wav -c 1 -l 3")
+        speaker_proc = self.shell("sleep 2 && speaker-test -t wav -c 1 -l 2")
         await asyncio.gather(record_proc, speaker_proc)
         assert output_file.exists(), f"Output file missing: {output_file}"
         assert output_file.stat().st_size != 0, f"Output file empty: {output_file}"
