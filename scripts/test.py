@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-
 import asyncio
 import time
 import abc
@@ -110,8 +109,6 @@ class RaspberryTest(BaseTest):
         line = logs.splitlines()[0]
         assert line.startswith("32:00d")
         return True
-
-
 
 class CameraTest(BaseTest):
     name = "CAMERA"
@@ -275,7 +272,6 @@ class MCUTest(BaseTest):
         while time.perf_counter() - start < timeout:
             if not ser.in_waiting:
                 await asyncio.sleep(0.1)
-                self.log("Log in if not ser.in_waiting")
                 continue
 
             chunk = ser.read_until(b"\x7E")

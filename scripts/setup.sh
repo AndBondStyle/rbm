@@ -155,7 +155,6 @@ configure_eeprom() {
     log_info "Загрузка pieeprom-2024-09-10.bin"
     curl -fsSL "$RPI_EEPROM_FREEZE_URL" -o "$RPI_EEPROM_FREEZE_SOURCE"
 
-
     rpi-eeprom-config "$RPI_EEPROM_FREEZE_SOURCE" > "$RPI_EEPROM_FREEZE_CONFIG"
 
     if ! grep -q "^FREEZE_VERSION=" "$RPI_EEPROM_FREEZE_CONFIG"; then
@@ -364,9 +363,7 @@ main() {
     install_tests_service
     install_web_term_services
     configure_config_txt
-
     configure_eeprom
-
     clone_repository
     run_docker_compose
     
