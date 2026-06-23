@@ -13,6 +13,8 @@ launch:
   - include:
       file: $(find-pkg-share main)/launch/nav2.yaml
   - include:
+      file: $(find-pkg-share main)/launch/goal_proxy.yaml
+  - include:
       file: $(find-pkg-share main)/launch/slam.yaml
   - include:
       file: $(find-pkg-share main)/launch/camera_stream.yaml
