@@ -275,7 +275,7 @@ class MCUTest(BaseTest):
                 continue
 
             chunk = ser.read_until(b"\x7E")
-            self.log(f"RAW : {':'.join(f'{x:02X}' for x in chunk)}")
+            # self.log(f"RAW : {':'.join(f'{x:02X}' for x in chunk)}")
             data += chunk
             if len(data) >= self.Packet._size:
                 
@@ -599,6 +599,8 @@ INTRO = """
 
 HOSTNAME = socket.gethostname()
 
+test_classes = [CameraTest, SpeakerMicTest, MoveTest, MCUTest,
+                Nav2RoundTripTest, RaspberryTest, StartDockerTest, DockerROSTest]
 
 @ui.page("/tests", favicon="✅")
 def main_page():
@@ -622,7 +624,7 @@ def main_page():
 
                 ui.separator()
 
-                for test_class in BaseTest.tests.keys():
+                for test_class in test_classes:
                     test = test_class()
                     test_instances.append(test)
 
