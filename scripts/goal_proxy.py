@@ -97,7 +97,9 @@ class Nav2Wrapper(Node):
 
         # Create action goal
         action_goal = NavigateToPose.Goal()
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
         action_goal.pose = goal_msg
+
 
         # Send goal with feedback callback
         self.goal_future = self.action_client.send_goal_async(
