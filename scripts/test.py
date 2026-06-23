@@ -599,8 +599,8 @@ INTRO = """
 
 HOSTNAME = socket.gethostname()
 
-test_classes = [CameraTest, SpeakerMicTest, MoveTest, MCUTest,
-                Nav2RoundTripTest, RaspberryTest, StartDockerTest, DockerROSTest]
+test_classes = [RaspberryTest, CameraTest, SpeakerMicTest, MoveTest, MCUTest,
+                Nav2RoundTripTest, StartDockerTest, DockerROSTest]
 
 @ui.page("/tests", favicon="✅")
 def main_page():
