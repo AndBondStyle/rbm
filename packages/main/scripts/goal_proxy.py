@@ -12,7 +12,7 @@ from std_msgs.msg import String, Float32MultiArray
 from slam_toolbox.srv import Reset
 
 
-class Nav2Wrapper(Node):
+class goal_proxy(Node):
     def __init__(self):
         super().__init__("goal_proxy")
 
@@ -185,7 +185,7 @@ class Nav2Wrapper(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = Nav2Wrapper()
+    node = goal_proxy()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
