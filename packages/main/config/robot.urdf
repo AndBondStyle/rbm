@@ -5,6 +5,12 @@
 <joint name="lidar_joint" type="fixed">
   <parent link="base_link"/>
   <child link="lidar"/>
-  <origin xyz="0.06 0 0" rpy="0 0 1.57"/>
+  <origin xyz="0.06 0 0" rpy="0 0 0"/>
+</joint>
+<link name="tof_lidar"></link>
+<joint name="tof_lidar_joint" type="fixed">
+  <parent link="base_link"/>
+  <child link="tof_lidar"/>
+  <origin xyz="0.09 0 -0.08" rpy="-1.57 0 -1.57"/>
 </joint>
 </robot>

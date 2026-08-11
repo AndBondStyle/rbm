@@ -1,0 +1,658 @@
+#include<Arduino.h>
+#include<Wire.h>
+#include <FastLED.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_INA219.h>
+#include <SparkFun_VL53L5CX_Library.h>
+#include <ICM_20948.h>
+#include <Packetizer.h>
+#include <HardwareSerial.h>
+#include <driver/pulse_cnt.h>
+
+#define NUM_LEDS 16
+#define PIN_LEDS 16
+#define DISPLAY_WIDTH 128
+#define DISPLAY_HEIGHT 64
+#define OLED_RESET -1
+#define BTN_NEXT 25
+#define BTN_BACK 26
+#define SDA_TWO 33
+#define SCL_TWO 32
+#define FREQ 1000000
+
+TwoWire WireTwo = TwoWire(1);
+
+HardwareSerial Brain(2);
+
+#define BRAIN_BAUD 115200
+#define BRAIN_RX -1
+#define BRAIN_TX 0
+
+//Init
+Adafruit_SSD1306 display(DISPLAY_WIDTH, DISPLAY_HEIGHT, &Wire, OLED_RESET);
+Adafruit_INA219 ina219(0x41);
+SparkFun_VL53L5CX tof;
+
+//LEDS
+CRGB leds[NUM_LEDS];
+bool sensorStat[NUM_LEDS] = {false, false, false, false, true, false, false, false}; // IMU, ToF, INA, Screen, Led, Motors
+
+
+// Display
+const int NUM_SENSORS = 4;
+String sensorsName[NUM_SENSORS] = {"IMU", "ToF", "INA", "Motors"};
+bool sensor_check[NUM_SENSORS] = {false, false, false, false};
+int curr_sens = 0;
+
+//INA
+const int BAT_TABLE_SIZE = 10;
+const float discharge[BAT_TABLE_SIZE] = {
+	12.40f,
+	12.13f,
+	12.04f,
+	11.77f,
+	11.54f,
+	11.29f,
+	11.00f,
+	10.76f,
+	10.53f,
+	10.27f
+};
+
+const float chargeSoc[BAT_TABLE_SIZE] = {
+	100.0f,
+	90.0f,
+	80.0f,
+	70.0f,
+	60.0f,
+	50.0f,
+	40.0f,
+	30.0f,
+	20.0f,
+	10.0f
+};
+
+struct InaData {
+	float v = 0.0f;
+	float i = 0.0f;
+	
+	float soc = 0.0f;
+		
+	unsigned long lastMs = 0;
+};
+
+InaData ina_data;
+const float MAX_CAPACITY = 2600;
+float curr_capacity = 0.0;
+
+void updateBat() {
+	unsigned long now = millis();
+
+	if (ina_data.lastMs == 0) {
+		ina_data.lastMs = now;
+		return;
+	}
+
+	if (ina_data.v >= 12.4) {
+		ina_data.soc = 100.0f;
+	}
+
+	float dtH = (now - ina_data.lastMs) / 3600000.0f;
+	ina_data.lastMs = now;
+
+	float dtmAh = ina_data.i * dtH;
+	ina_data.soc += dtmAh * 100.0f / MAX_CAPACITY;
+
+	if (ina_data.soc > 100.0f) {
+		ina_data.soc = 100.0f;
+	} else if (ina_data.soc < 0.0f) {
+		ina_data.soc = 0.0f;
+	}
+}
+
+
+
+//TOF
+VL53L5CX_ResultsData tofBuffer;
+
+//IMU
+ICM_20948_I2C imu;
+
+struct ImuData {
+	float accXYZ[3] = {0, 0, 0};
+	float gyrXYZ[3] = {0, 0, 0};
+	float magXYZ[3] = {0, 0, 0};
+	float quatWXYZ[4] = {1,0,0,0};
+	bool quatReady = false;
+};
+
+ImuData imu_data;
+
+//quat9
+bool imuDmpReady = false;
+
+void updateImuQuat() {
+	if (!imuDmpReady) {
+		return;
+	}
+
+	icm_20948_DMP_data_t data;
+
+	imu.readDMPdataFromFIFO(&data);
+
+	if (imu.status == ICM_20948_Stat_Ok || imu.status == ICM_20948_Stat_FIFOMoreDataAvail) {
+		if ((data.header & DMP_header_bitmap_Quat9) > 0) {
+			float q1 =((float)data.Quat9.Data.Q1)/1073741824.0f;
+			float q2 =((float)data.Quat9.Data.Q2)/1073741824.0f;
+			float q3 =((float)data.Quat9.Data.Q3)/1073741824.0f;
+		
+			float q0 =sqrtf(1.0f - (q1 * q1 + q2 * q2 + q3 * q3));
+			
+			imu_data.quatWXYZ[0] = q0;
+			imu_data.quatWXYZ[1] = q1;
+			imu_data.quatWXYZ[2] = q2;
+			imu_data.quatWXYZ[3] = q3;
+
+			imu_data.quatReady = true;
+		}
+	}
+}
+
+//Motor
+#define NUM_MOTORS 4
+
+const int encA[NUM_MOTORS] = {18, 5, 35, 34};
+const int encB[NUM_MOTORS] = {19, 23, 36, 39};
+
+pcnt_unit_handle_t pcntUnit[NUM_MOTORS] = {NULL, NULL, NULL, NULL};
+pcnt_channel_handle_t pcntChan[NUM_MOTORS] = {NULL, NULL, NULL, NULL};
+
+struct MotData {
+	long ticks[4] = {0, 0, 0, 0};
+	long curr[4] = {0, 0, 0, 0};
+	long total[4] = {0,0,0,0};
+	float rev[4] = {0,0,0,0};
+	float totalRev[4] = {0,0,0,0};
+};
+
+MotData mot_data;
+
+//Это надо будет нормально померить
+const float ticksPerRev[NUM_MOTORS] = {319, 335, 330, 327};
+
+const int encDir[NUM_MOTORS] = {1, 1, -1, -1};
+
+void resetMotCount() {
+	for (int i = 0; i < NUM_MOTORS; ++i) {
+		pcnt_unit_clear_count(pcntUnit[i]);
+
+		mot_data.ticks[i] = 0;
+		mot_data.curr[i] = 0;
+		mot_data.total[i] = 0;
+		mot_data.rev[i] = 0;
+		mot_data.totalRev[i] = 0;
+	}
+}
+
+//control protocol
+#define MSG_INA 1
+#define MSG_TOF 2
+#define MSG_IMU 3
+
+struct __attribute__((packed)) InaPayload {
+	int32_t volt_mV;
+	int32_t curr_mA;
+	uint16_t soc_x100;
+	uint32_t time_ms;
+};
+
+struct __attribute__((packed)) ImuPayload {
+	int16_t acc[3];
+	int16_t gyr[3];
+	int16_t mag[3];
+	int16_t quat[4];
+	uint32_t time_ms;
+};
+
+#define TOF_ZONES 64
+struct __attribute__((packed)) TofPayload {
+	int8_t zones;
+	int16_t distance_mm[TOF_ZONES];
+	uint8_t status[TOF_ZONES];
+	uint32_t time_ms;
+};
+
+int16_t FloatToInt16(float x) {
+	if (x > 32767.0f) {
+		return 32767;
+	}
+
+	if (x < -32768.0f) {
+		return -32768;
+	}
+
+	if (x >= 0.0f) {
+		return (int16_t)(x + 0.5f);
+	}
+	return (int16_t)(x - 0.5f);
+}
+
+int16_t qFloatToInt16(float q) {
+	if (q > 1.0f) {
+		q = 1.0f;
+	}
+
+	if (q < -1.0f) {
+		q = -1.0f;
+	}
+
+	return FloatToInt16(q * 32767.0f);
+}
+
+#define MAX_PAYLOAD_SIZE sizeof(TofPayload)
+
+void sendPacket(uint8_t msg_type, const void* payload, size_t payloadSize) {
+	uint8_t frame[1 + MAX_PAYLOAD_SIZE];
+
+	if (payloadSize > MAX_PAYLOAD_SIZE) {
+		return;
+	}
+
+	frame[0] = msg_type;
+	memcpy(frame + 1, payload, payloadSize);
+
+	Packetizer::send(
+		Serial,
+		frame,
+		payloadSize + 1
+	);
+}
+
+
+
+void sendInaPacket() {
+	InaPayload p;
+	p.volt_mV = (int32_t)(ina_data.v * 1000.0f);
+	p.curr_mA = (int32_t)(ina_data.i);
+	p.soc_x100 = (uint16_t)(ina_data.soc * 100.0f);
+	p.time_ms = millis();
+
+	sendPacket(MSG_INA, &p, sizeof(p));
+}
+
+void sendTofPacket() {
+	TofPayload p;
+	p.zones = TOF_ZONES;
+
+	for (int i = 0; i < TOF_ZONES; ++i) {
+		p.distance_mm[i] = tofBuffer.distance_mm[i];
+		p.status[i] = tofBuffer.target_status[i];
+	}
+
+	p.time_ms = millis();
+	sendPacket(MSG_TOF, &p, sizeof(p));
+}
+
+void sendImuPacket() {
+	ImuPayload p;
+
+	for (int i = 0; i < 3; ++i) {
+		p.acc[i] = FloatToInt16(imu_data.accXYZ[i]);
+		p.gyr[i] = FloatToInt16(imu_data.gyrXYZ[i] * 10.0f);
+		p.mag[i] = FloatToInt16(imu_data.magXYZ[i] * 10.0f);
+	}
+
+	for (int i = 0; i < 4; ++i) {
+		p.quat[i] = qFloatToInt16(imu_data.quatWXYZ[i]);
+	}
+
+	p.time_ms = millis();
+
+	sendPacket(MSG_IMU, &p, sizeof(p));
+}
+
+void taskProtocol(void *meow) {
+	for (;;) {
+		if (sensorStat[2] && sensor_check[2]) {
+			sendInaPacket();
+		}
+
+		if (sensorStat[0] && sensor_check[0]) {
+			sendImuPacket();
+		}
+
+		if (sensorStat[1] && sensor_check[1]) {
+			sendTofPacket();
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(200));
+	}
+}
+
+//tasks
+void taskLED(void *meow) {
+	for(;;) {
+		for (int i = 0; i < NUM_LEDS; ++i) {
+			leds[i] = sensorStat[i] ? CRGB::White : CRGB::White;
+		}
+		FastLED.show();
+		vTaskDelay(50 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskDisplay(void *meow) {
+	for(;;) {
+		if (digitalRead(BTN_NEXT) == LOW && digitalRead(BTN_BACK) == LOW) {
+			resetMotCount();
+			vTaskDelay(500 / portTICK_PERIOD_MS);
+		} else if (digitalRead(BTN_NEXT) == LOW) {
+			curr_sens++;
+			if (curr_sens >= NUM_SENSORS) {
+				curr_sens = 0;
+			}
+			vTaskDelay(200 / portTICK_PERIOD_MS);
+		} else if (digitalRead(BTN_BACK) == LOW) {
+			curr_sens--;
+			if (curr_sens < 0) {
+				curr_sens = NUM_SENSORS - 1;
+			}
+			vTaskDelay(200 / portTICK_PERIOD_MS);
+		}
+		display.clearDisplay();
+		display.setCursor(0,0);
+		display.setTextSize(1);
+		display.setTextColor(SSD1306_WHITE);
+		display.print(sensorsName[curr_sens]);
+		display.print(" bat: " + String(ina_data.soc) + "%");
+		
+		if (sensor_check[curr_sens]) {
+			display.setCursor(0, 32);
+			display.setTextColor(SSD1306_WHITE);
+			if (curr_sens == 0 && sensor_check[0]) {
+				display.setTextSize(1);
+				display.print("acc: ");
+				for (int i = 0; i < 3; ++i) {
+					display.print(imu_data.accXYZ[i]);
+					display.print(" ");
+				}
+				display.println();
+				display.print("gyr: ");
+				for (int i = 0; i < 3; ++i) {
+					display.print(imu_data.gyrXYZ[i]);
+					display.print(" ");
+				}
+				display.println();
+				display.print("mag: ");
+				for (int i = 0; i < 3; ++i) {
+					display.print(imu_data.magXYZ[i]);
+					display.print(" ");
+				}
+			} else if (curr_sens == 1 && sensor_check[1]) {
+				display.setTextSize(1);
+				for (int i = 0; i < 16; ++i) {
+					display.print(tofBuffer.distance_mm[i]);
+					display.print(" ");
+					if ((i + 1) % 4 == 0) {
+						display.println();
+					}
+				}
+			} else if (curr_sens == 2 && sensor_check[2] ) {
+				display.setTextSize(2);
+				display.print("V: ");
+				display.print(ina_data.v, 2);
+				display.print("V  I: ");
+				display.print(ina_data.i, 2);
+				display.println("mA");
+			} else if (curr_sens == 3 && sensor_check[3]) {
+				display.setTextSize(1);
+				for (int i = 0; i < 4; ++i) {
+					display.print("M" + String(i) + ": " + String(mot_data.ticks[i]) + " All:" + String(mot_data.totalRev[i]) + "rev`");
+					display.println();
+				}
+
+			}
+		} else {
+			display.setCursor(64,32);
+			display.setTextSize(3);
+			display.setTextColor(SSD1306_WHITE);
+			display.print(":(");
+		}
+		display.display();
+		vTaskDelay(100 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskIna(void *meow) {
+	for (;;) {
+		if (sensorStat[2]) {
+			ina_data.v = ina219.getBusVoltage_V();
+			ina_data.i = ina219.getCurrent_mA() * 10;
+			
+			updateBat();
+			//logBatteryPoint();
+			sensor_check[2] = true;
+		}
+		vTaskDelay(250 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskTof(void *meow) {
+	for (;;) {
+		if (sensorStat[1]) {
+			if (tof.isDataReady()) {
+				if (tof.getRangingData(&tofBuffer)) {
+					sensor_check[1] = true;
+				} else {
+					sensor_check[1] = false;
+				}
+			}
+		} else {
+			sensor_check[1] = false;
+		}
+		vTaskDelay(200 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskImu(void *meow) {
+	for (;;) {
+		if (sensorStat[0]) {
+			if (imu.dataReady()) {
+				imu.getAGMT();
+				imu_data.accXYZ[0] = imu.accX();
+				imu_data.accXYZ[1] = imu.accY();
+				imu_data.accXYZ[2] = imu.accZ();
+
+				imu_data.gyrXYZ[0] = imu.gyrX();
+				imu_data.gyrXYZ[1] = imu.gyrY();
+				imu_data.gyrXYZ[2] = imu.gyrZ();
+
+				imu_data.magXYZ[0] = imu.magX();
+				imu_data.magXYZ[1] = imu.magY();
+				imu_data.magXYZ[2] = imu.magZ();
+				sensor_check[0] = true;
+			}
+			updateImuQuat();
+		} else {
+			sensor_check[0] = false;
+			imu_data.quatReady = false;
+		}
+		vTaskDelay(pdMS_TO_TICKS(20));
+	}
+}
+
+void taskTicks(void* meow) {
+	for (;;) {
+		for (int i = 0; i < NUM_MOTORS; ++i) {
+			int value = 0;
+
+			pcnt_unit_get_count(pcntUnit[i], &value);
+			pcnt_unit_clear_count(pcntUnit[i]);
+
+			long delta = value * encDir[i];
+			
+			mot_data.ticks[i] = delta;
+			mot_data.curr[i] = mot_data.curr[i] + delta;
+			mot_data.total[i] = mot_data.total[i] + abs(delta);
+
+			mot_data.rev[i] = mot_data.curr[i] / ticksPerRev[i];
+			mot_data.totalRev[i] = mot_data.total[i] / ticksPerRev[i];
+		}
+
+		sensor_check[3] = true;
+		sensorStat[5] = true;
+
+		vTaskDelay(pdMS_TO_TICKS(200));
+
+	}
+}
+
+//init_motor
+void setupMot(int i) {
+	pcnt_unit_config_t unit_config = {};
+	unit_config.low_limit = -32768;
+	unit_config.high_limit = 32767;
+
+	pcnt_new_unit(&unit_config, &pcntUnit[i]);
+
+	pcnt_chan_config_t ch_conf = {};
+	ch_conf.edge_gpio_num = encA[i];
+	ch_conf.level_gpio_num = encB[i];
+
+	pcnt_new_channel(pcntUnit[i], &ch_conf, &pcntChan[i]);
+
+	pcnt_channel_set_edge_action(
+		pcntChan[i],
+		PCNT_CHANNEL_EDGE_ACTION_INCREASE,
+		PCNT_CHANNEL_EDGE_ACTION_HOLD
+	);
+
+	pcnt_channel_set_level_action(
+		pcntChan[i],
+		PCNT_CHANNEL_LEVEL_ACTION_KEEP,
+		PCNT_CHANNEL_LEVEL_ACTION_INVERSE
+	);
+
+	pcnt_glitch_filter_config_t filter_config = {};
+	filter_config.max_glitch_ns = 1000;
+	pcnt_unit_set_glitch_filter(pcntUnit[i], &filter_config);
+
+	pcnt_unit_enable(pcntUnit[i]);
+	pcnt_unit_clear_count(pcntUnit[i]);
+	pcnt_unit_start(pcntUnit[i]);
+}
+
+//init_imu_dmp
+bool setupImuDMP() {
+	bool check_dmp = true;
+
+	check_dmp &= (imu.initializeDMP() == ICM_20948_Stat_Ok);
+
+	check_dmp &= (imu.enableDMPSensor(INV_ICM20948_SENSOR_ORIENTATION) == ICM_20948_Stat_Ok);
+	check_dmp &= (imu.setDMPODRrate(DMP_ODR_Reg_Quat9,0) == ICM_20948_Stat_Ok);
+	check_dmp &= (imu.enableFIFO() == ICM_20948_Stat_Ok);
+	check_dmp &= (imu.enableDMP() == ICM_20948_Stat_Ok);
+	check_dmp &= (imu.resetDMP() == ICM_20948_Stat_Ok);
+	check_dmp &= (imu.resetFIFO() == ICM_20948_Stat_Ok);
+
+	return check_dmp;
+}
+
+//start_energy use voltage
+float interpolSoc(float v, const float volt[], const float soc[], int n) {
+	if (v >= volt[0]) {
+		return soc[0];
+	}
+
+	if (v <= volt[n - 1]) {
+		return soc[n - 1];
+	}
+	for (int i = 0; i < n - 1; ++i) {
+		if (v <= volt[i] && v >= volt[i + 1]) {
+			float t = (v - volt[i + 1]) / (volt[i] - volt[i + 1]);
+			return soc[i + 1] + t * (soc[i] - soc[i + 1]);
+		}
+	}
+	return 0.0f;
+}
+
+
+void start_energy() {
+	ina_data.v = ina219.getBusVoltage_V();
+	ina_data.i = ina219.getCurrent_mA() * 10;
+
+	if (ina_data.i <= 0.0f) {
+		ina_data.soc = interpolSoc(ina_data.v, discharge, chargeSoc, BAT_TABLE_SIZE);
+	}
+}
+
+//pin_instal
+void pin_install() {
+	for (int i = 0; i < 4; ++i) {
+		pinMode(encA[i], INPUT);
+		pinMode(encB[i], INPUT);
+	}
+}
+
+//base
+void setup() {
+	Serial.begin(921600);
+	
+	//Brain.begin(BRAIN_BAUD, SERIAL_8N1, BRAIN_RX, BRAIN_TX);
+
+ 	FastLED.addLeds<WS2812, PIN_LEDS, GRB>(leds, NUM_LEDS); 
+  	FastLED.setBrightness(20);
+	
+	Wire.begin();
+
+	if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+		sensorStat[3] = true;	
+	}
+
+	if (ina219.begin()) {
+		sensorStat[2] = true;
+		ina219.setCalibration_32V_2A();
+		ina_data.lastMs = millis();
+		start_energy();
+	}
+
+	WireTwo.begin(SDA_TWO, SCL_TWO, FREQ);
+
+	if (tof.begin(0x29, WireTwo)) {
+		sensorStat[1] = true;
+		tof.setResolution(64);
+		tof.setRangingFrequency(10);
+		tof.startRanging();
+	}
+
+	if (imu.begin(Wire, false) == ICM_20948_Stat_Ok) {
+		sensorStat[0] = true;
+		imuDmpReady = setupImuDMP();
+
+		if (!imuDmpReady) {
+			imu_data.quatReady = false;
+		}
+	}
+
+	pinMode(BTN_NEXT, INPUT_PULLUP);
+	pinMode(BTN_BACK, INPUT_PULLUP);
+
+
+	pin_install();
+
+	for (int i = 0; i < NUM_MOTORS; ++i) {
+		setupMot(i);
+	}
+
+	xTaskCreatePinnedToCore(taskLED, "LED", 2048, NULL, 1, NULL, 1);
+	xTaskCreatePinnedToCore(taskDisplay, "Display", 2048, NULL, 1, NULL, 1);
+	xTaskCreatePinnedToCore(taskIna, "INA", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskTof, "TOF", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskImu, "IMU", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskTicks, "MOTORS", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskProtocol, "PROTO", 2048, NULL, 1, NULL, 1);
+}
+
+void loop() {
+
+}

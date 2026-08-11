@@ -323,10 +323,10 @@ main() {
     install_platformio_tools
     install_tests_service
     install_web_term_services
-    configure_config_txt
+    # configure_config_txt
 
     # FIXME: Обновление бутлоадера убивает некоторые пишки - надо исправить
-    sudo systemctl disable rpi-eeprom-update.service
+    # sudo systemctl disable rpi-eeprom-update.service
     # configure_eeprom
 
     clone_repository

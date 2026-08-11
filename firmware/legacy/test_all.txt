@@ -1,0 +1,315 @@
+#include<Arduino.h>
+#include<Wire.h>
+#include <FastLED.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_INA219.h>
+#include <SparkFun_VL53L5CX_Library.h>
+#include <ICM_20948.h>
+
+#define NUM_LEDS 8
+#define PIN_LEDS 16
+#define DISPLAY_WIDTH 128
+#define DISPLAY_HEIGHT 64
+#define OLED_RESET -1
+#define BTN_NEXT 25
+#define BTN_BACK 26
+#define SDA_TWO 33
+#define SCL_TWO 32
+#define FREQ 1000000
+
+TwoWire WireTwo = TwoWire(1);
+
+//Init
+Adafruit_SSD1306 display(DISPLAY_WIDTH, DISPLAY_HEIGHT, &Wire, OLED_RESET);
+Adafruit_INA219 ina219(0x41);
+SparkFun_VL53L5CX tof;
+
+//LEDS
+CRGB leds[NUM_LEDS];
+bool sensorStat[NUM_LEDS] = {false, false, false, false, true, false, false, false}; // IMU, ToF, INA, Screen, Led, Motors
+
+
+// Display
+const int NUM_SENSORS = 4;
+String sensorsName[NUM_SENSORS] = {"IMU", "ToF", "INA", "Motors"};
+bool sensor_check[NUM_SENSORS] = {false, false, false, false};
+int curr_sens = 0;
+
+struct InaData {
+	float v = 0.0f;
+	float i = 0.0f;
+	bool check = false;
+};
+
+InaData ina_data;
+
+//TOF
+VL53L5CX_ResultsData tofBuffer;
+
+//IMU
+ICM_20948_I2C imu;
+
+struct ImuData {
+	float accXYZ[3] = {0, 0, 0};
+	float gyrXYZ[3] = {0, 0, 0};
+	float magXYZ[3] = {0, 0, 0};
+};
+
+ImuData imu_data;
+
+//Motor
+#define NUM_MOTORS 4
+
+const int encA[NUM_MOTORS] = {18, 5, 35, 34};
+const int encB[NUM_MOTORS] = {19, 23, 36, 39};
+
+volatile long encTicks[NUM_MOTORS] = {0, 0, 0, 0};
+portMUX_TYPE encMux = portMUX_INITIALIZER_UNLOCKED;
+
+
+void IRAM_ATTR encISR(void* arg) {
+	int i = (int)arg;
+	portENTER_CRITICAL_ISR(&encMux);
+	int BState = digitalRead(encB[i]);
+	if (BState == HIGH) {
+		encTicks[i]++;
+	} else {
+		encTicks[i]--;
+	}
+	portEXIT_CRITICAL_ISR(&encMux);
+}
+
+struct MotData {
+	int ticks[4] = {0, 0, 0, 0};
+	int curr[4] = {0, 0, 0, 0};
+};
+
+MotData mot_data;
+
+//tasks
+void taskLED(void *meow) {
+	for(;;) {
+		for (int i = 0; i < NUM_LEDS; ++i) {
+			leds[i] = sensorStat[i] ? CRGB::Green : CRGB::Red;
+		}
+		FastLED.show();
+		vTaskDelay(50 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskDisplay(void *meow) {
+	for(;;) {
+		if (digitalRead(BTN_NEXT) == LOW) {
+			curr_sens++;
+			if (curr_sens >= NUM_SENSORS) {
+				curr_sens = 0;
+			}
+			vTaskDelay(200 / portTICK_PERIOD_MS);
+		}
+		if (digitalRead(BTN_BACK) == LOW) {
+			curr_sens--;
+			if (curr_sens < 0) {
+				curr_sens = NUM_SENSORS - 1;
+			}
+			vTaskDelay(200 / portTICK_PERIOD_MS);
+		}
+		display.clearDisplay();
+		display.setCursor(0,0);
+		display.setTextSize(1);
+		display.setTextColor(SSD1306_WHITE);
+		display.print(sensorsName[curr_sens]);
+		
+		if (sensor_check[curr_sens]) {
+			display.setCursor(0, 32);
+			display.setTextColor(SSD1306_WHITE);
+			if (curr_sens == 0 && sensor_check[0]) {
+				display.setTextSize(1);
+				display.print("acc: ");
+				for (int i = 0; i < 3; ++i) {
+					display.print(imu_data.accXYZ[i]);
+					display.print(" ");
+				}
+				display.println();
+				display.print("gyr: ");
+				for (int i = 0; i < 3; ++i) {
+					display.print(imu_data.gyrXYZ[i]);
+					display.print(" ");
+				}
+				display.println();
+				display.print("mag: ");
+				for (int i = 0; i < 3; ++i) {
+					display.print(imu_data.magXYZ[i]);
+					display.print(" ");
+				}
+			} else if (curr_sens == 1 && sensor_check[1]) {
+				display.setTextSize(1);
+				for (int i = 0; i < 16; ++i) {
+					display.print(tofBuffer.distance_mm[i]);
+					display.print(" ");
+					if ((i + 1) % 4 == 0) {
+						display.println();
+					}
+				}
+			} else if (curr_sens == 2 && sensor_check[2] ) {
+				display.setTextSize(2);
+				display.print("V: ");
+				display.print(ina_data.v, 2);
+				display.print("V  I: ");
+				display.print(ina_data.i, 2);
+				display.println("mA");
+			} else if (curr_sens == 3 && sensor_check[3]) {
+				display.setTextSize(1);
+				for (int i = 0; i < 4; ++i) {
+					display.print("M" + String(i) + ": " + String(mot_data.ticks[i]));
+					display.println();
+				}
+
+			}
+		} else {
+			display.setCursor(64,32);
+			display.setTextSize(3);
+			display.setTextColor(SSD1306_WHITE);
+			display.print(":(");
+		}
+		display.display();
+		vTaskDelay(100 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskIna(void *meow) {
+	for (;;) {
+		if (sensorStat[2]) {
+			ina_data.v = ina219.getBusVoltage_V();
+			ina_data.i = ina219.getCurrent_mA();
+			sensor_check[2] = true;
+		}
+		vTaskDelay(250 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskTof(void *meow) {
+	for (;;) {
+		if (sensorStat[1]) {
+			if (tof.isDataReady()) {
+				if (tof.getRangingData(&tofBuffer)) {
+					sensor_check[1] = true;
+				} else {
+					sensor_check[1] = false;
+				}
+			}
+		} else {
+			sensor_check[1] = false;
+		}
+		vTaskDelay(200 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskImu(void *meow) {
+	for (;;) {
+		if (sensorStat[0]) {
+			if (imu.dataReady()) {
+				imu.getAGMT();
+				imu_data.accXYZ[0] = imu.accX();
+				imu_data.accXYZ[1] = imu.accY();
+				imu_data.accXYZ[2] = imu.accZ();
+
+				imu_data.gyrXYZ[0] = imu.gyrX();
+				imu_data.gyrXYZ[1] = imu.gyrY();
+				imu_data.gyrXYZ[2] = imu.gyrZ();
+
+				imu_data.magXYZ[0] = imu.magX();
+				imu_data.magXYZ[1] = imu.magY();
+				imu_data.magXYZ[2] = imu.magZ();
+				sensor_check[0] = true;
+			}
+		} else {
+			sensor_check[0] = false;
+		}
+		vTaskDelay(200 / portTICK_PERIOD_MS);
+	}
+}
+
+void taskTicks(void* meow) {
+	for (;;) {
+		static unsigned long lastTime = 0;
+		static int lastTicks[4] = {0, 0, 0, 0};
+		int currTicks[4] = {0, 0, 0, 0};
+
+		portENTER_CRITICAL(&encMux);
+		for (int i = 0; i < 4; ++i) {
+			currTicks[i] = encTicks[i];
+		}
+		portEXIT_CRITICAL(&encMux);
+
+
+		for (int i = 0; i < 4; ++i) {
+			mot_data.ticks[i] = currTicks[i] - lastTicks[i];
+			lastTicks[i] = currTicks[i];
+		}
+		sensor_check[3] = true;
+		sensorStat[3] = true;
+		vTaskDelay(200 / portTICK_PERIOD_MS);
+	}
+}
+
+//pin_instal
+void pin_install() {
+	for (int i = 0; i < 4; ++i) {
+		pinMode(encA[i], INPUT);
+		pinMode(encB[i], INPUT);
+	}
+}
+
+//base
+void setup() {
+	Serial.begin(921600);
+	
+ 	FastLED.addLeds<WS2812, PIN_LEDS, GRB>(leds, NUM_LEDS); 
+  	FastLED.setBrightness(20);
+	
+	Wire.begin();
+
+	if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+		sensorStat[3] = true;	
+	}
+
+	if (ina219.begin()) {
+		sensorStat[2] = true;
+	}
+
+	WireTwo.begin(SDA_TWO, SCL_TWO, FREQ);
+
+	if (tof.begin(0x29, WireTwo)) {
+		sensorStat[1] = true;
+		tof.setResolution(16);
+		tof.setRangingFrequency(10);
+		tof.startRanging();
+	}
+
+	if (imu.begin(WireTwo, false) == ICM_20948_Stat_Ok) {
+		sensorStat[0] = true;
+	}
+
+	pinMode(BTN_NEXT, INPUT_PULLUP);
+	pinMode(BTN_BACK, INPUT_PULLUP);
+
+	pin_install();
+
+	//attachInterruptArg(digitalPinToInterrupt(encA[0]), encISR, (void*)0,RISING);
+	//attachInterruptArg(digitalPinToInterrupt(encA[1]), encISR, (void*)1, RISING);
+	//attachInterruptArg(digitalPinToInterrupt(encA[2]), encISR, (void*)2, RISING);
+	//attachInterruptArg(digitalPinToInterrupt(encA[3]), encISR, (void*)3, RISING);
+
+	xTaskCreatePinnedToCore(taskLED, "LED", 2048, NULL, 1, NULL, 1);
+	xTaskCreatePinnedToCore(taskDisplay, "Display", 2048, NULL, 1, NULL, 1);
+	xTaskCreatePinnedToCore(taskIna, "INA", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskTof, "TOF", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskImu, "IMU", 2048, NULL, 2, NULL, 1);
+	xTaskCreatePinnedToCore(taskTicks, "MOTORS", 2048, NULL, 2, NULL, 1);
+	
+}
+
+void loop() {
+
+}

@@ -1,0 +1,37 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_INA219.h>
+
+Adafruit_INA219 ina219(0x41);
+
+void setup() {
+  Serial.begin(921600);
+  delay(1000);
+
+  Wire.begin();
+
+  Serial.println("INA219 init...");
+
+  if (!ina219.begin()) {
+    Serial.println("INA219 NOT FOUND");
+    while (1) delay(10);
+  }
+
+  Serial.println("INA219 OK");
+}
+
+void loop() {
+  float voltage = ina219.getBusVoltage_V();
+  float current = ina219.getCurrent_mA();
+  float power = ina219.getPower_mW();
+
+  Serial.print("V: ");
+  Serial.print(voltage);
+  Serial.print(" V | I: ");
+  Serial.print(current);
+  Serial.print(" mA | P: ");
+  Serial.print(power);
+  Serial.println(" mW");
+
+  delay(100);
+}

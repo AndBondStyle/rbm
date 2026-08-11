@@ -185,7 +185,7 @@ controller_server:
 
       stateful: true
       allow_reversing: false
-      transform_tolerance: 0.1
+      transform_tolerance: 0.25
 
 local_costmap:
   local_costmap:
@@ -197,7 +197,7 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.025
+      resolution: 0.05
       robot_radius: 0.08
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
@@ -237,7 +237,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       robot_radius: 0.08
-      resolution: 0.025
+      resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:
@@ -278,7 +278,7 @@ planner_server:
     GridBased:
       plugin: "nav2_navfn_planner::NavfnPlanner"
       tolerance: 0.5
-      use_astar: false
+      use_astar: true
       allow_unknown: true
 
 behavior_server:
@@ -302,7 +302,7 @@ behavior_server:
     local_frame: odom
     global_frame: map
     robot_base_frame: base_link
-    transform_tolerance: 0.1
+    transform_tolerance: 0.25
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4

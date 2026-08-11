@@ -1,0 +1,46 @@
+#include <Arduino.h>
+#include <FastLED.h>
+
+#define WS_LED_PIN 16
+#define NUM_LEDS 8
+CRGB leds[NUM_LEDS];
+
+void setup() { 
+  FastLED.addLeds<WS2812, WS_LED_PIN, GRB>(leds, NUM_LEDS); 
+  FastLED.setBrightness(50);
+}
+
+void cylon() {
+    static uint8_t pos = 0;
+    static int8_t direction = 1;
+    static uint8_t r_count = 0;
+    static uint8_t g_count = 0;
+    static uint8_t b_count = 0;
+    fadeToBlackBy(leds, NUM_LEDS, 20);
+    leds[pos] = CRGB(r_count, g_count, b_count);
+    if (r_count + direction * 15 <= 255) {
+	r_count += direction * 15;
+    } else if (r_count - direction * 15 >= 0) {
+	r_count -=direction * 15;
+    }
+    if (g_count + direction * 15 <= 255) {
+	g_count += direction * 15;
+    } else if (r_count - direction * 15 >= 0) {
+	g_count -=direction * 15;
+    }
+    if (b_count + direction * 15 <= 255) {
+	b_count += direction * 15;
+    } else if (r_count - direction * 15 >= 0) {
+	b_count -=direction * 15;
+    }
+    pos += direction;
+    if (pos == 0 || pos == NUM_LEDS - 1) {
+        direction = -direction;
+    }
+}
+
+void loop() {
+    cylon();
+    FastLED.show();
+    delay(50);
+}
