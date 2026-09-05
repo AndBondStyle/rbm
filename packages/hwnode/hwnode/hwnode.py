@@ -6,8 +6,8 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32MultiArray, Header
 from sensor_msgs.msg import Imu, PointCloud2, PointField
 from threading import Thread
-from hwnode.crc8 import crc8
 from hwnode.vl_lidar_reader import compute_zone_angles, distances_to_points
+from hwnode import proto
 from dataclasses import dataclass
 import math
 import struct
@@ -21,7 +21,7 @@ MAX_ACCEL_LINEAR = 0.3  # m/s²
 MAX_ACCEL_ANGULAR = 5.0  # rad/s²
 MAX_DECEL_LINEAR = 2.0  # m/s²
 MAX_DECEL_ANGULAR = 5.0  # rad/s²
-MAX_WHEEL_SPEED = 35.0  # rad/s
+MAX_WHEEL_SPEED = 20.0  # rad/s
 
 CONTROL_HZ = 30
 ANGULAR_GAIN = 1.8
@@ -31,52 +31,8 @@ MIN_INPLACE_ANGULAR = 0.8
 INPLACE_ANGULAR_THRESHOLD = 0.1
 INPLACE_LINEAR_THRESHOLD = 0.05
 
-#PORT = "/dev/ttyAMA0"
-#SPEED = 115200
 PORT = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
 SPEED = 921600
-
-
-@dataclass
-class Feedback:
-    accel_x: float
-    accel_y: float
-    accel_z: float
-    gyro_x: float
-    gyro_y: float
-    gyro_z: float
-    mag_x: float
-    mag_y: float
-    mag_z: float
-    left_angle: float
-    right_angle: float
-    left_speed: float
-    right_speed: float
-    left_lidar: int
-    right_lidar: int
-
-    @classmethod
-    def unpack(cls, buff: bytes):
-        format = "<hhhhhhhhhffffHHx"
-        if len(buff) != struct.calcsize(format): return
-        values = struct.unpack(format, buff)
-        return Feedback(
-            accel_x=values[0],
-            accel_y=values[1],
-            accel_z=values[2],
-            gyro_x=values[3] * 250.0 / 32768.0 / 180 * math.pi,
-            gyro_y=values[4] * 250.0 / 32768.0 / 180 * math.pi,
-            gyro_z=values[5] * 250.0 / 32768.0 / 180 * math.pi,
-            mag_x=values[6],
-            mag_y=values[7],
-            mag_z=values[8],
-            left_angle=values[9],
-            right_angle=values[10],
-            left_speed=values[11],
-            right_speed=values[12],
-            left_lidar=values[13],
-            right_lidar=values[14],
-        )
 
 
 class HardwareNode(Node):
@@ -98,15 +54,16 @@ class HardwareNode(Node):
         self.last_cmd_time = self.get_clock().now()
         self.ser = Serial(port=PORT, baudrate=SPEED, timeout=0.5)
         self.get_logger().info("Serial подключен")
-
+        
         self.control_timer = self.create_timer(1.0 / CONTROL_HZ, self.update)
         self.cmd_sub = self.create_subscription(Twist, "/cmd_vel", self.cmd_callback, 1)
+        self.pid_sub = self.create_subscription(Float32MultiArray, "/hardware/pid", self.pid_callback, 1)
         self.imu_pub = self.create_publisher(Imu, "/hardware/imu", 1)
         self.status_pub = self.create_publisher(Float32MultiArray, "/hardware/status", 1)
         self.odom_pub = self.create_publisher(Odometry, "/hardware/odom", 1)
         self.pc2_pub = self.create_publisher(PointCloud2, "/tof/cloud", 10)
+        
         self.tof_tan_lookup = compute_zone_angles()
-
         self.read_thread = Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
 
@@ -135,108 +92,109 @@ class HardwareNode(Node):
         
         return msg
 
+    def handle_status(self, payload):
+        status = Float32MultiArray()
+        status.data = [
+            payload.front_left.target,
+            payload.front_left.speed,
+            payload.front_left.angle % (2 * math.pi),
+            payload.front_left.effort,
+
+            payload.rear_left.target,
+            payload.rear_left.speed,
+            payload.rear_left.angle % (2 * math.pi),
+            payload.rear_left.effort,
+
+            payload.rear_right.target,
+            payload.rear_right.speed,
+            payload.rear_right.angle % (2 * math.pi),
+            payload.rear_right.effort,
+
+            payload.front_right.target,
+            payload.front_right.speed,
+            payload.front_right.angle % (2 * math.pi),
+            payload.front_right.effort,
+
+            payload.batt_voltage,
+            payload.batt_current,
+            payload.batt_percent,
+        ]
+        self.status_pub.publish(status)
+
+    def handle_imu(self, payload):
+        imu = Imu()
+
+        imu.header.stamp = self.get_clock().now().to_msg()
+        imu.header.frame_id = "imu_link"
+
+        acc_scale = 9.80665 / 1000.0
+
+        imu.linear_acceleration.x = float(payload.acc[0]) * acc_scale
+        imu.linear_acceleration.y = float(payload.acc[1]) * acc_scale
+        imu.linear_acceleration.z = float(payload.acc[2]) * acc_scale
+
+        gyro_scale = math.pi / 180.0
+
+        imu.angular_velocity.x = float(payload.gyr[0]) * gyro_scale
+        imu.angular_velocity.y = float(payload.gyr[1]) * gyro_scale
+        imu.angular_velocity.z = float(payload.gyr[2]) * gyro_scale
+
+        imu.orientation.w = float(payload.quat[0])
+        imu.orientation.x = float(payload.quat[1])
+        imu.orientation.y = float(payload.quat[2])
+        imu.orientation.z = float(payload.quat[3])
+
+        self.imu_pub.publish(imu)
+
+    def handle_tof(self, payload):
+        distances = np.array(
+            list(payload.distance_mm),
+            dtype=np.float32
+        )
+        #print(distances.reshape(8,8))
+
+        statuses = np.array(
+            list(payload.status),
+            dtype=np.uint8
+        )
+
+        tan_x, tan_y = self.tof_tan_lookup
+
+        points = distances_to_points(
+            distances,
+            tan_x,
+            tan_y
+        )
+
+        mask = (statuses == 5) & (distances >= 20)
+
+        #points = points[mask]
+
+        cloud = self.numpy_to_pointcloud2(
+            points,
+            frame_id="tof_lidar"
+        )
+
+        self.pc2_pub.publish(cloud)
+
     def read_loop(self):
         buff = b""
 
         while rclpy.ok():
-            line = self.ser.readline()
-            line = line.decode("utf-8", errors="ignore").strip()
-            if not line: continue
-            if line[0].upper() in "ABCD":
-                # TODO: Parse motors feedback
-                # print(line)
-                try:
-                    if line[0].upper() != "A": continue
-                    values = list(map(float, line[1:].split()))
-                    status = Float32MultiArray()
-                    status.data = values
-                    self.status_pub.publish(status)
-                except Exception as err:
-                    print("ERR", err, line)
-                    continue
-            if line[0].upper() == "L":
-                #print(">>>", line)
-                try:
-                    distances, status = line[1:].split(";")
-                    distances = [int(x) for x in distances.split(",")]
-                    status = [int(x) for x in status.split(",")]
-                    distances = np.array(distances, dtype=np.float32)
-                    status = np.array(status, dtype=np.uint8)
-                    points = distances_to_points(distances, *self.tof_tan_lookup)
-                    mask = (status == 5)# & (distances >= MIN_RANGE_MM)
-                    msg = self.numpy_to_pointcloud2(points[mask])
-                    self.pc2_pub.publish(msg)
-                except Exception as err:
-                    print("ERR", err, line)
-                    continue
-                # print(dist, status)
-        # while rclpy.ok():
-        #     chunk = self.ser.read_until(b"\x7E")
-        #     if len(buff) + len(chunk) > 39: buff = b""
-        #     buff += chunk
-        #     # chunk = chunk.rstrip(b"\x7E")
-        #     feedback = Feedback.unpack(buff)
-        #     # print(buff, len(buff), feedback)
-        #     if feedback is None: continue
-
-        #     now = self.get_clock().now().to_msg()
-
-        #     status = Float32MultiArray()
-        #     status.data = [
-        #         self.v_left,
-        #         feedback.left_speed,
-        #         feedback.left_angle,
-        #         self.v_right,
-        #         feedback.right_speed,
-        #         feedback.right_angle,
-        #     ]
-        #     self.status_pub.publish(status)
-
-        #     imu = Imu()
-        #     imu.header.frame_id = "base_link"
-        #     imu.header.stamp = now
-        #     imu.orientation_covariance = [-1.0] + [0.0] * 8
-        #     imu.linear_acceleration_covariance = [-1.0] + [0.0] * 8
-        #     imu.angular_velocity.x = feedback.gyro_x
-        #     imu.angular_velocity.y = feedback.gyro_y
-        #     imu.angular_velocity.z = feedback.gyro_z
-        #     imu.angular_velocity_covariance = [0.0] * 9
-        #     imu.angular_velocity_covariance[0] = 0.001
-        #     imu.angular_velocity_covariance[4] = 0.001
-        #     imu.angular_velocity_covariance[8] = 0.001
-        #     self.imu_pub.publish(imu)
-
-        #     odom = Odometry()
-        #     odom.child_frame_id = "base_link"
-        #     odom.header.frame_id = "base_link"
-        #     odom.header.stamp = now
-        #     linear_vel = (feedback.left_speed + feedback.right_speed) * self.R / 2
-        #     odom.twist.twist.linear.x = linear_vel
-        #     odom.twist.covariance = [0.0] * 36
-        #     odom.twist.covariance[0] = 0.001
-        #     odom.twist.covariance[35] = 1000.0
-        #     if abs(feedback.left_speed) < 0.001 and abs(feedback.right_speed) < 0.001:
-        #         odom.twist.covariance[0] = 0.000001
-        #         odom.twist.covariance[35] = 0.000001
-        #     self.odom_pub.publish(odom)
-
+            ret = proto.read_packet(self.ser)
+            if ret is None: continue
+            type, payload = ret
+            if type == proto.PacketType.STATUS:
+                self.handle_status(payload)
+            elif type == proto.PacketType.IMU:
+                self.handle_imu(payload)
+            elif type == proto.PacketType.TOF:
+                self.handle_tof(payload)
+                 
     def cmd_callback(self, msg: Twist):
-        # x = msg.angular.z
-        # L, R = x, -x
-        # print(L, R)
-        # A, B, C, D = L, -R, -R, L
-        # buff = b""
-        # buff += f"A{A:.2f}\n".encode()
-        # buff += f"C{B:.2f}\n".encode()
-        # buff += f"B{C:.2f}\n".encode()
-        # buff += f"D{D:.2f}\n".encode()
-        # self.ser.write(buff)
-        # self.ser.flush()
-
         self.last_cmd_time = self.get_clock().now()
         v = msg.linear.x * LINEAR_GAIN
         w = msg.angular.z * ANGULAR_GAIN
-
         v = math.copysign(min(abs(v), MAX_LINEAR), v)
         w = math.copysign(min(abs(w), MAX_ANGULAR), w)
 
@@ -246,7 +204,15 @@ class HardwareNode(Node):
             w = 0.0
 
         self.target_v, self.target_w = v, w
-        # print(self.target_v, self.target_w)
+
+    def pid_callback(self, msg: Float32MultiArray):
+        if len(msg.data) != 5:
+            self.get_logger().warn("Bad PID message, expected 5 numbers: [kp, ki, kd, limit, lpf_tf]")
+            return
+        kp, ki, kd, limit, lpf_tf = msg.data
+        pack = proto.PidState(kp, ki, kd, limit, lpf_tf)
+        self.get_logger().info(f"Set PID params: {pack}")
+        proto.write_packet(self.ser, pack)
 
     def ramp(self, current, target, accel_step, decel_step):
         step = accel_step if abs(target) > abs(current) else decel_step
@@ -256,7 +222,6 @@ class HardwareNode(Node):
 
     def update(self):
         if (self.get_clock().now() - self.last_cmd_time).nanoseconds * 1e-9 > 0.3:
-            # print("err")
             self.target_v = 0.0
             self.target_w = 0.0
 
@@ -282,26 +247,11 @@ class HardwareNode(Node):
 
         L, R = self.v_left * 1.0, self.v_right * 1.0
         A, B, C, D = L, -R, L, -R
-        buff = b""
-        buff += f"A{A:.2f}\n".encode()
-        buff += f"C{B:.2f}\n".encode()
-        buff += f"B{C:.2f}\n".encode()
-        buff += f"D{D:.2f}\n".encode()
-        self.ser.write(buff)
-        self.ser.flush()
-        #print(f">>> {buff.replace(b'\n', b' ')}")
 
-        #buf = struct.pack("<ffB", self.v_left, self.v_right, 0)
-        #buf = b"\xA0" + buf
-        #crc = crc8()
-        #crc.update(buf)
-        #buf = b"\x7E" + buf + crc.digest()
-        # debug = [f"{i:02x}" for i in buf]
-        # print(f"-> {' '.join(debug)}")
-        #self.ser.write(buf)
-        #self.ser.flush()
+        pack = proto.ControlPacket(float(A), float(B), float(C), float(D))
+        proto.write_packet(self.ser, pack)
 
-
+        
 def main():
     rclpy.init()
     node = HardwareNode()

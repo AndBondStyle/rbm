@@ -26,7 +26,7 @@ void ESP32HWEncoder::init()
 
     // 2. Set up a glitch filter (suppress noise shorter than 1 microsecond)
     pcnt_glitch_filter_config_t filter_config = {
-        .max_glitch_ns = 1000,
+        .max_glitch_ns = 10000,
     };
     ESP_ERROR_CHECK(pcnt_unit_set_glitch_filter(pcnt_unit, &filter_config));
 
@@ -113,6 +113,7 @@ float IRAM_ATTR ESP32HWEncoder::getSensorAngle()
         angleOverflow += cpr;
     }
 
+    int32_t prevAngleSum = angleSum;
     angleSum = (angleOverflow + angleCounter) % cpr;
     if (angleSum < 0) {
         angleSum += cpr;
@@ -121,5 +122,7 @@ float IRAM_ATTR ESP32HWEncoder::getSensorAngle()
     //taskEXIT_CRITICAL(&spinlock); // Exit critical section
     
     // Calculate the shaft angle
-    return _2PI * angleSum * inv_cpr;
+    float result = _2PI * angleSum * inv_cpr;
+    if (angleSum == prevAngleSum) result += 1e-6f;
+    return result;
 }
